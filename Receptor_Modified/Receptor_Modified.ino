@@ -18,32 +18,51 @@
 SoftwareSerial loraSerial(PIN_RX, PIN_TX);
 LoRa_E32 e32ttl(&loraSerial, PIN_AUX, PIN_M0, PIN_M1);
 
+uint8_t telRxBuf[TELEMETRY_SIZE];
+uint8_t telRxIdx = 0;
+
 void setup() {
   Serial.begin(115200);
+  pinMode(PIN_AUX, INPUT);
   loraSerial.begin(9600);
   e32ttl.begin();
 }
 
 void loop() {
   // ========================================================
-  // 1. TELEMETRY: LoRa (95B) -> Serial
+  // 1. TELEMETRY: LoRa -> Serial (non-blocking accumulation)
   // ========================================================
-  if (e32ttl.available() > 1) {
-    ResponseStructContainer rsc = e32ttl.receiveMessage(TELEMETRY_SIZE);
-    if (rsc.status.code == 1) {
-      uint8_t* buf = (uint8_t*)rsc.data;
+  while (loraSerial.available()) {
+    uint8_t b = loraSerial.read();
 
-      if (buf[0] == 0xFE && buf[1] == 0xCA && buf[51] == 0xBE) {
-        Serial.write(buf, TELEMETRY_SIZE);
-      }
+    if (telRxIdx == 0) {
+      if (b == 0xFE) telRxBuf[telRxIdx++] = b;
+      continue;
     }
-    rsc.close();
+
+    if (telRxIdx == 1) {
+      if (b == 0xCA) {
+        telRxBuf[telRxIdx++] = b;
+      } else {
+        telRxIdx = 0;
+      }
+      continue;
+    }
+
+    telRxBuf[telRxIdx++] = b;
+
+    if (telRxIdx == TELEMETRY_SIZE) {
+      if (telRxBuf[TELEMETRY_SIZE - 1] == 0xBE) {
+        Serial.write(telRxBuf, TELEMETRY_SIZE);
+      }
+      telRxIdx = 0;
+    }
   }
 
   // ========================================================
-  // 2. COMMANDS: Serial (5B) -> LoRa
+  // 2. COMMANDS: Serial -> LoRa (AUX-gated)
   // ========================================================
-  if (Serial.available() >= COMMAND_SIZE) {
+  if (Serial.available() >= COMMAND_SIZE && digitalRead(PIN_AUX) == HIGH) {
     uint8_t cmd[COMMAND_SIZE];
     Serial.readBytes(cmd, COMMAND_SIZE);
 

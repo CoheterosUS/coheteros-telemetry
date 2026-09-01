@@ -16,6 +16,7 @@
 
 #define TELEMETRY_SIZE 52
 #define TELEMETRY_INTERVAL_MS 1000
+#define CMD_LISTEN_WINDOW_MS 50
 
 LoRa_E32 e32ttl(&Serial2, PIN_AUX, PIN_M0, PIN_M1);
 HardwareSerial SerialCV(1);
@@ -26,6 +27,40 @@ unsigned long ultimoTX = 0;
 
 uint8_t telBuffer[TELEMETRY_SIZE];
 bool telReady = false;
+
+static void waitAuxHigh() {
+  unsigned long t0 = millis();
+  while (digitalRead(PIN_AUX) == LOW) {
+    if (millis() - t0 > 200) break;
+  }
+}
+
+static void checkAndForwardCommands() {
+  while (Serial2.available() >= 5) {
+    if (Serial2.peek() != 0xFE) {
+      Serial2.read();
+      continue;
+    }
+
+    uint8_t cmd[5];
+    Serial2.readBytes(cmd, 5);
+
+    Serial.print(F("CMD bytes: "));
+    for (int i = 0; i < 5; i++) {
+      Serial.print(cmd[i], HEX);
+      Serial.print(' ');
+    }
+    Serial.println();
+
+    if (cmd[1] == 0xCA && cmd[4] == 0xBE) {
+      SerialCV.write(cmd, 5);
+      Serial.print(F("CMD FWD: 0x"));
+      Serial.println(cmd[2], HEX);
+    } else {
+      Serial.println(F("CMD INVALID frame"));
+    }
+  }
+}
 
 void setup() {
   Serial.begin(115200);
@@ -60,43 +95,26 @@ void loop() {
   }
 
   // ========================================================
-  // 2. COMMANDS: LoRa -> CV (PRIORITY, checked first)
+  // 2. COMMANDS: LoRa -> CV (checked every iteration)
   // ========================================================
-  if (digitalRead(PIN_AUX) == HIGH && Serial2.available() >= 5) {
-    while (Serial2.available()) {
-      if (Serial2.read() == 0xFE) {
-        if (Serial2.available() >= 4) {
-          uint8_t cmd[5];
-          cmd[0] = 0xFE;
-          Serial2.readBytes(cmd + 1, 4);
-
-          Serial.print(F("CMD bytes: "));
-          for (int i = 0; i < 5; i++) {
-            Serial.print(cmd[i], HEX);
-            Serial.print(' ');
-          }
-          Serial.println();
-
-          if (cmd[1] == 0xCA && cmd[4] == 0xBE) {
-            SerialCV.write(cmd, 5);
-            Serial.print(F("CMD FWD: 0x"));
-            Serial.println(cmd[2], HEX);
-          } else {
-            Serial.println(F("CMD INVALID frame"));
-          }
-        }
-        break;
-      }
-    }
+  if (digitalRead(PIN_AUX) == HIGH) {
+    checkAndForwardCommands();
   }
 
   // ========================================================
-  // 3. TELEMETRY TX: rate-limited, AUX-gated
+  // 3. TELEMETRY TX: rate-limited, AUX-gated, with listen window
   // ========================================================
   if (telReady && digitalRead(PIN_AUX) == HIGH && (millis() - ultimoTX >= TELEMETRY_INTERVAL_MS)) {
     e32ttl.sendMessage(telBuffer, TELEMETRY_SIZE);
     ultimoTX = millis();
     telReady = false;
+
+    waitAuxHigh();
+
+    unsigned long listenStart = millis();
+    while (millis() - listenStart < CMD_LISTEN_WINDOW_MS) {
+      checkAndForwardCommands();
+    }
   }
 
   // ========================================================
