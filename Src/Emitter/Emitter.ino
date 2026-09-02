@@ -26,6 +26,7 @@ unsigned long ultimoGPS = 0;
 unsigned long ultimoTX = 0;
 
 uint8_t telBuffer[TELEMETRY_SIZE];
+uint8_t telRxIdx = 0;
 bool telReady = false;
 
 static void waitAuxHigh() {
@@ -76,21 +77,38 @@ void setup() {
     miGPS.setI2COutput(COM_TYPE_UBX);
     miGPS.setDynamicModel(DYN_MODEL_AIRBORNE4g);
     miGPS.setNavigationFrequency(1);
+    miGPS.setAutoPVT(true);
   }
 }
 
 void loop() {
   // ========================================================
-  // 1. BUFFER TELEMETRY FROM CV (non-blocking)
+  // 1. BUFFER TELEMETRY FROM CV (non-blocking accumulation)
   // ========================================================
-  if (SerialCV.available() >= TELEMETRY_SIZE) {
-    if (SerialCV.peek() == 0xFE) {
-      SerialCV.readBytes(telBuffer, TELEMETRY_SIZE);
-      if (telBuffer[1] == 0xCA && telBuffer[TELEMETRY_SIZE - 1] == 0xBE) {
+  while (SerialCV.available()) {
+    uint8_t b = SerialCV.read();
+
+    if (telRxIdx == 0) {
+      if (b == 0xFE) telBuffer[telRxIdx++] = b;
+      continue;
+    }
+
+    if (telRxIdx == 1) {
+      if (b == 0xCA) {
+        telBuffer[telRxIdx++] = b;
+      } else {
+        telRxIdx = 0;
+      }
+      continue;
+    }
+
+    telBuffer[telRxIdx++] = b;
+
+    if (telRxIdx == TELEMETRY_SIZE) {
+      if (telBuffer[TELEMETRY_SIZE - 1] == 0xBE) {
         telReady = true;
       }
-    } else {
-      SerialCV.read();
+      telRxIdx = 0;
     }
   }
 
@@ -118,12 +136,12 @@ void loop() {
   }
 
   // ========================================================
-  // 4. GPS: I2C -> ESP32 -> Trama (24B) -> CV
+  // 4. GPS: I2C -> ESP32 -> Trama (24B) -> CV (non-blocking)
   // ========================================================
   if (millis() - ultimoGPS >= 1000) {
     ultimoGPS = millis();
 
-    if (miGPS.getPVT()) {
+    if (miGPS.getPVT(0)) {
       uint32_t unix_time = miGPS.getHour() * 3600UL + miGPS.getMinute() * 60UL + miGPS.getSecond();
       uint16_t milliseconds = miGPS.getMillisecond();
       int32_t latitude = miGPS.getLatitude();
