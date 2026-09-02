@@ -81,7 +81,7 @@ void loop() {
   }
 
   // ========================================================
-  // 2. COMMANDS: Serial -> buffer (sent after next telemetry RX)
+  // 2. COMMANDS: Serial -> buffer
   // ========================================================
   if (Serial.available() >= COMMAND_SIZE) {
     uint8_t cmd[COMMAND_SIZE];
@@ -90,8 +90,11 @@ void loop() {
     if (cmd[0] == 0xFE && cmd[1] == 0xCA && cmd[4] == 0xBE) {
       memcpy(pendingCmd, cmd, COMMAND_SIZE);
       cmdPending = true;
-
-      trySendPendingCmd();
     }
   }
+
+  // ========================================================
+  // 3. SEND: retry pending command every iteration until AUX HIGH
+  // ========================================================
+  trySendPendingCmd();
 }
