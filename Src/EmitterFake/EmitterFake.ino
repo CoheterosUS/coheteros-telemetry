@@ -1,6 +1,7 @@
 // ***** ESP32 FAKE TELEMETRY + REAL GPS *****
 // Sends 52-byte Wire Telemetry packets via LoRa to ground station.
 // Sensor data is simulated. GPS data is real from ZOE-M8Q.
+// Receives commands from ground and reflects them in LastCommand field.
 
 #include <Wire.h>
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
@@ -13,6 +14,8 @@
 #define PIN_M1 26
 
 #define TELEMETRY_SIZE 52
+#define TELEMETRY_INTERVAL_MS 1000
+#define CMD_LISTEN_WINDOW_MS 50
 
 LoRa_E32 e32ttl(&Serial2, PIN_AUX, PIN_M0, PIN_M1);
 SFE_UBLOX_GNSS miGPS;
@@ -23,6 +26,7 @@ int32_t gpsAltitude = 0;
 uint8_t gpsSatellites = 0;
 
 unsigned long lastTx = 0;
+uint8_t lastCommand = 0;
 
 void packInt16(uint8_t* buf, int16_t val) {
   memcpy(buf, &val, 2);
@@ -36,8 +40,36 @@ void packUint32(uint8_t* buf, uint32_t val) {
   memcpy(buf, &val, 4);
 }
 
+static void waitAuxHigh() {
+  unsigned long t0 = millis();
+  while (digitalRead(PIN_AUX) == LOW) {
+    if (millis() - t0 > 200) break;
+  }
+}
+
+static void checkCommands() {
+  while (Serial2.available() >= 5) {
+    if (Serial2.peek() != 0xFE) {
+      Serial2.read();
+      continue;
+    }
+
+    uint8_t cmd[5];
+    Serial2.readBytes(cmd, 5);
+
+    if (cmd[1] == 0xCA && cmd[4] == 0xBE) {
+      lastCommand = cmd[2];
+      Serial.print(F("CMD RX: 0x"));
+      Serial.println(cmd[2], HEX);
+    } else {
+      Serial.println(F("CMD INVALID frame"));
+    }
+  }
+}
+
 void setup() {
   Serial.begin(115200);
+  pinMode(PIN_AUX, INPUT);
 
   Serial2.begin(9600, SERIAL_8N1, PIN_RX_LORA, PIN_TX_LORA);
   e32ttl.begin();
@@ -46,7 +78,8 @@ void setup() {
   if (miGPS.begin()) {
     miGPS.setI2COutput(COM_TYPE_UBX);
     miGPS.setDynamicModel(DYN_MODEL_AIRBORNE4g);
-    miGPS.setNavigationFrequency(10);
+    miGPS.setNavigationFrequency(1);
+    miGPS.setAutoPVT(true);
     Serial.println(F("GPS OK"));
   } else {
     Serial.println(F("GPS FAIL — continuing without GPS"));
@@ -57,84 +90,82 @@ void setup() {
 }
 
 void loop() {
-  if (miGPS.getPVT()) {
+  // ========================================================
+  // 1. GPS: non-blocking poll
+  // ========================================================
+  if (miGPS.getPVT(0)) {
     gpsLatitude = miGPS.getLatitude();
     gpsLongitude = miGPS.getLongitude();
-    gpsAltitude = miGPS.getAltitude() / 10;  // mm -> ×100 m
+    gpsAltitude = miGPS.getAltitude() / 10;  // mm -> x100 m
     gpsSatellites = miGPS.getSIV();
   }
 
-  if (millis() - lastTx < 100) return;
-  lastTx = millis();
+  // ========================================================
+  // 2. COMMANDS: LoRa -> update lastCommand
+  // ========================================================
+  if (digitalRead(PIN_AUX) == HIGH) {
+    checkCommands();
+  }
 
-  uint8_t pkt[TELEMETRY_SIZE];
-  memset(pkt, 0, TELEMETRY_SIZE);
+  // ========================================================
+  // 3. TELEMETRY TX: rate-limited, AUX-gated, with listen window
+  // ========================================================
+  if (digitalRead(PIN_AUX) == HIGH && (millis() - lastTx >= TELEMETRY_INTERVAL_MS)) {
+    lastTx = millis();
 
-  // Sync (offset 0-1)
-  pkt[0] = 0xFE;
-  pkt[1] = 0xCA;
+    uint8_t pkt[TELEMETRY_SIZE];
+    memset(pkt, 0, TELEMETRY_SIZE);
 
-  // Tick (offset 2-5, uint32 raw)
-  uint32_t tick = millis();
-  packUint32(pkt + 2, tick);
+    pkt[0] = 0xFE;
+    pkt[1] = 0xCA;
 
-  // AccelXYZ — fake (offset 6-11, int16 truncated)
-  packInt16(pkt + 6,  (int16_t)random(-5, 5));        // AccelX
-  packInt16(pkt + 8,  (int16_t)random(-5, 5));        // AccelY
-  packInt16(pkt + 10, (int16_t)9);                     // AccelZ (~9 m/s²)
+    uint32_t tick = millis();
+    packUint32(pkt + 2, tick);
 
-  // GyroXYZ — fake (offset 12-17, int16 truncated)
-  packInt16(pkt + 12, (int16_t)random(-1, 1));         // GyroX
-  packInt16(pkt + 14, (int16_t)random(-1, 1));         // GyroY
-  packInt16(pkt + 16, (int16_t)random(-1, 1));         // GyroZ
+    packInt16(pkt + 6,  (int16_t)random(-5, 5));
+    packInt16(pkt + 8,  (int16_t)random(-5, 5));
+    packInt16(pkt + 10, (int16_t)9);
 
-  // PressurePa (offset 18-19, int16 ÷10)
-  packInt16(pkt + 18, (int16_t)10132);                 // 101325 Pa ÷ 10
+    packInt16(pkt + 12, (int16_t)random(-1, 1));
+    packInt16(pkt + 14, (int16_t)random(-1, 1));
+    packInt16(pkt + 16, (int16_t)random(-1, 1));
 
-  // TemperatureC (offset 20, int8 truncated)
-  pkt[20] = (int8_t)25;                                // 25 °C
+    packInt16(pkt + 18, (int16_t)10132);
+    pkt[20] = (int8_t)25;
 
-  // GPS — real (offset 21-33)
-  packInt32(pkt + 21, gpsLatitude);                    // Latitude (deg ×10^7)
-  packInt32(pkt + 25, gpsLongitude);                   // Longitude (deg ×10^7)
-  packInt32(pkt + 29, gpsAltitude);                    // GPSAltitude (m ×100)
-  pkt[33] = gpsSatellites;                             // Satellites
+    packInt32(pkt + 21, gpsLatitude);
+    packInt32(pkt + 25, gpsLongitude);
+    packInt32(pkt + 29, gpsAltitude);
+    pkt[33] = gpsSatellites;
 
-  // BaroAltitude (offset 34-37, int32 ×100)
-  packInt32(pkt + 34, random(0, 10000));
+    packInt32(pkt + 34, random(0, 10000));
+    packInt32(pkt + 38, random(-500, 500));
 
-  // BaroVelocity (offset 38-41, int32 ×100)
-  packInt32(pkt + 38, random(-500, 500));
+    packUint32(pkt + 42, 0x00000000);
 
-  // FaultFlags (offset 42-45, uint32 bitmask)
-  packUint32(pkt + 42, 0x00000000);
+    packInt16(pkt + 46, (int16_t)(37 + random(-1, 1)));
 
-  // BatteryVoltage (offset 46-47, int16 ×10)
-  packInt16(pkt + 46, (int16_t)(37 + random(-1, 1)));  // ~3.7 V
+    pkt[48] = 0;   // State: IDLE
+    pkt[49] = 0;   // RelayState
+    pkt[50] = lastCommand;
+    pkt[51] = 0xBE;
 
-  // State (offset 48)
-  pkt[48] = 0;   // IDLE
+    e32ttl.sendMessage(pkt, TELEMETRY_SIZE);
 
-  // RelayState (offset 49)
-  pkt[49] = 0;
-
-  // LastCommand (offset 50)
-  pkt[50] = 0;   // COMMAND_NONE
-
-  // Footer (offset 51)
-  pkt[51] = 0xBE;
-
-  ResponseStatus rs = e32ttl.sendMessage(pkt, TELEMETRY_SIZE);
-
-  if (rs.code == 1) {
     Serial.print(F("TX | Sat:"));
     Serial.print(gpsSatellites);
     Serial.print(F(" Lat:"));
     Serial.print(gpsLatitude);
     Serial.print(F(" Lon:"));
-    Serial.println(gpsLongitude);
-  } else {
-    Serial.print(F("TX ERR: "));
-    Serial.println(rs.getResponseDescription());
+    Serial.print(gpsLongitude);
+    Serial.print(F(" CMD:0x"));
+    Serial.println(lastCommand, HEX);
+
+    waitAuxHigh();
+
+    unsigned long listenStart = millis();
+    while (millis() - listenStart < CMD_LISTEN_WINDOW_MS) {
+      checkCommands();
+    }
   }
 }
