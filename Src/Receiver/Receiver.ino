@@ -12,6 +12,8 @@
 #define PIN_M0 5
 #define PIN_M1 6
 
+#define PIN_LED 13
+
 #define TELEMETRY_SIZE 52
 #define COMMAND_SIZE 5
 
@@ -24,25 +26,11 @@ uint8_t telRxIdx = 0;
 uint8_t pendingCmd[COMMAND_SIZE];
 bool cmdPending = false;
 
-static void waitAuxHigh() {
-  unsigned long t0 = millis();
-  while (digitalRead(PIN_AUX) == LOW) {
-    if (millis() - t0 > 200) break;
-  }
-}
-
-static void trySendPendingCmd() {
-  if (!cmdPending) return;
-  if (digitalRead(PIN_AUX) != HIGH) return;
-
-  e32ttl.sendMessage(pendingCmd, COMMAND_SIZE);
-  waitAuxHigh();
-  cmdPending = false;
-}
-
 void setup() {
   Serial.begin(115200);
   pinMode(PIN_AUX, INPUT);
+  pinMode(PIN_LED, OUTPUT);
+  digitalWrite(PIN_LED, LOW);
   loraSerial.begin(9600);
   e32ttl.begin();
 }
@@ -75,8 +63,6 @@ void loop() {
         Serial.write(telRxBuf, TELEMETRY_SIZE);
       }
       telRxIdx = 0;
-
-      trySendPendingCmd();
     }
   }
 
@@ -94,7 +80,11 @@ void loop() {
   }
 
   // ========================================================
-  // 3. SEND: retry pending command every iteration until AUX HIGH
+  // 3. SEND: when idle and not mid-packet, write directly
   // ========================================================
-  trySendPendingCmd();
+  if (cmdPending && digitalRead(PIN_AUX) == HIGH && telRxIdx == 0) {
+    loraSerial.write(pendingCmd, COMMAND_SIZE);
+    cmdPending = false;
+    digitalWrite(PIN_LED, !digitalRead(PIN_LED));
+  }
 }
