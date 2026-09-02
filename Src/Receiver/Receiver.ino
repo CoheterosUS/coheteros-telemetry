@@ -21,6 +21,25 @@ LoRa_E32 e32ttl(&loraSerial, PIN_AUX, PIN_M0, PIN_M1);
 uint8_t telRxBuf[TELEMETRY_SIZE];
 uint8_t telRxIdx = 0;
 
+uint8_t pendingCmd[COMMAND_SIZE];
+bool cmdPending = false;
+
+static void waitAuxHigh() {
+  unsigned long t0 = millis();
+  while (digitalRead(PIN_AUX) == LOW) {
+    if (millis() - t0 > 200) break;
+  }
+}
+
+static void trySendPendingCmd() {
+  if (!cmdPending) return;
+  if (digitalRead(PIN_AUX) != HIGH) return;
+
+  e32ttl.sendMessage(pendingCmd, COMMAND_SIZE);
+  waitAuxHigh();
+  cmdPending = false;
+}
+
 void setup() {
   Serial.begin(115200);
   pinMode(PIN_AUX, INPUT);
@@ -56,18 +75,23 @@ void loop() {
         Serial.write(telRxBuf, TELEMETRY_SIZE);
       }
       telRxIdx = 0;
+
+      trySendPendingCmd();
     }
   }
 
   // ========================================================
-  // 2. COMMANDS: Serial -> LoRa (AUX-gated)
+  // 2. COMMANDS: Serial -> buffer (sent after next telemetry RX)
   // ========================================================
-  if (Serial.available() >= COMMAND_SIZE && digitalRead(PIN_AUX) == HIGH) {
+  if (Serial.available() >= COMMAND_SIZE) {
     uint8_t cmd[COMMAND_SIZE];
     Serial.readBytes(cmd, COMMAND_SIZE);
 
     if (cmd[0] == 0xFE && cmd[1] == 0xCA && cmd[4] == 0xBE) {
-      e32ttl.sendMessage(cmd, COMMAND_SIZE);
+      memcpy(pendingCmd, cmd, COMMAND_SIZE);
+      cmdPending = true;
+
+      trySendPendingCmd();
     }
   }
 }
