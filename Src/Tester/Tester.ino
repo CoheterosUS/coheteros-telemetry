@@ -1,7 +1,7 @@
 /*
  * PacketSimulator - Arduino Uno telemetry packet generator
  *
- * Emits TelemetryPacket_t (95 bytes, packed, little-endian) at 10 Hz over the
+ * Emits TelemetryPacket_t (52 bytes, packed, little-endian) at 10 Hz over the
  * hardware UART so the ground station UI can be tested without the real flight
  * controller. Also accepts the ground station's 5-byte command frames.
  *
@@ -58,35 +58,29 @@ uint8_t lastCommand = CMD_NONE;
 struct __attribute__((packed)) TelemetryPacket_t {
   uint16_t sync;
   uint32_t tick;
-  int32_t accelX;
-  int32_t accelY;
-  int32_t accelZ;
-  int32_t gyroX;
-  int32_t gyroY;
-  int32_t gyroZ;
-  int32_t magX;
-  int32_t magY;
-  int32_t magZ;
-  int32_t pressurePa;
-  int32_t temperatureC;
+  int16_t accelX;
+  int16_t accelY;
+  int16_t accelZ;
+  int16_t gyroX;
+  int16_t gyroY;
+  int16_t gyroZ;
+  int16_t pressurePa;
+  int8_t temperatureC;
   int32_t latitude;
   int32_t longitude;
   int32_t gpsAltitude;
   uint8_t satellites;
   int32_t barometricAltitude;
   int32_t barometricVelocity;
-  int32_t velX;
-  int32_t velY;
-  int32_t velZ;
   uint32_t flags;
-  int32_t batteryVoltage;
+  int16_t batteryVoltage;
   uint8_t state;
   uint8_t relayState;
   uint8_t lastCommand;
   uint8_t syncEnd;
 };
 
-static_assert(sizeof(TelemetryPacket_t) == 95, "packet must be exactly 95 bytes");
+static_assert(sizeof(TelemetryPacket_t) == 52, "packet must be exactly 52 bytes");
 
 // simulated flight state
 const float PAD_LATITUDE = 37.3852298f;
@@ -297,10 +291,8 @@ void stepFlight() {
 void buildPacket(TelemetryPacket_t &packet) {
   const float asl = altitude + PAD_ELEVATION_M;
 
-  // barometric formula, altitude above sea level -> pressure in pascals
   const float pressurePa = 101325.0f * pow(1.0f - 2.25577e-5f * asl, 5.25588f);
 
-  // rockets tumble a little more once the motor is out
   const float spin = (flightState >= STATE_PASSIVE_BURNOUT) ? 60.0f : 5.0f;
 
   const float seconds = millis() / 1000.0f;
@@ -308,39 +300,36 @@ void buildPacket(TelemetryPacket_t &packet) {
   packet.sync = SYNC_WORD;
   packet.tick = millis();
 
-  packet.accelX = scaled(noise(1.5f));
-  packet.accelY = scaled(noise(1.5f));
-  packet.accelZ = scaled(verticalAccel + noise(0.4f));
+  // Truncated: cast float straight to int16
+  packet.accelX = (int16_t)(noise(1.5f));
+  packet.accelY = (int16_t)(noise(1.5f));
+  packet.accelZ = (int16_t)(verticalAccel + noise(0.4f));
 
-  packet.gyroX = scaled(noise(spin));
-  packet.gyroY = scaled(noise(spin));
-  packet.gyroZ = scaled(noise(spin));
+  packet.gyroX = (int16_t)(noise(spin));
+  packet.gyroY = (int16_t)(noise(spin));
+  packet.gyroZ = (int16_t)(noise(spin));
 
-  packet.magX = scaled(320.0f + noise(15.0f));
-  packet.magY = scaled(-140.0f + noise(15.0f));
-  packet.magZ = scaled(410.0f + noise(15.0f));
+  // ÷10: pressure in Pa divided by 10
+  packet.pressurePa = (int16_t)(pressurePa / 10.0f);
 
-  packet.pressurePa = scaled(pressurePa);
-  packet.temperatureC = scaled(25.0f - (asl * 0.0065f) + noise(0.3f));
+  // Truncated: cast float to int8
+  packet.temperatureC = (int8_t)(25.0f - (asl * 0.0065f) + noise(0.3f));
 
-  // drift the ground track a little so the map has something to draw
   packet.latitude = (int32_t)((PAD_LATITUDE + 0.0004f * sin(seconds / 6.0f)) * 10000000.0f);
   packet.longitude = (int32_t)((PAD_LONGITUDE + 0.0004f * cos(seconds / 6.0f)) * 10000000.0f);
 
-  // GPS altitude is above sea level and much noisier than the barometer
+  // ×100: metres * 100
   packet.gpsAltitude = scaled(asl + noise(12.0f));
   packet.satellites = (uint8_t)random(7, 13);
 
-  // barometric altitude is above ground level, filtered
+  // ×100: metres * 100
   packet.barometricAltitude = scaled(altitude + noise(0.5f));
   packet.barometricVelocity = scaled(velocity + noise(0.3f));
 
-  packet.velX = 0;
-  packet.velY = 0;
-  packet.velZ = 0;
-
   packet.flags = 0;
-  packet.batteryVoltage = scaled(12.6f - (seconds * 0.002f) + noise(0.03f));
+
+  // ×10: volts * 10
+  packet.batteryVoltage = (int16_t)((12.6f - (seconds * 0.002f) + noise(0.03f)) * 10.0f);
 
   packet.state = flightState;
   packet.relayState = relayState;

@@ -1,0 +1,309 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish]{babel}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{bytefield}
+\usepackage{fancyhdr}
+\usepackage{tikz}
+\usepackage{listings}
+\usetikzlibrary{arrows.meta, positioning}
+
+\geometry{margin=2.5cm}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{gray!10},
+    xleftmargin=1em,
+    framexleftmargin=0.5em,
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Protocolo UART}
+\fancyhead[R]{\small Coheteros}
+\fancyfoot[C]{\thepage}
+
+\title{Protocolo de Comunicación UART\\[0.3em]
+\large STM32H723 $\leftrightarrow$ ESP32}
+\author{Coheteros}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+Todos los datos son \textbf{little-endian}, estructuras empaquetadas, sin relleno. El header \texttt{0xCAFE} se transmite LSB primero: \texttt{0xFE}, \texttt{0xCA}. Footer siempre \texttt{0xBE}.
+
+\begin{figure}[h]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+    node distance=4cm,
+    box/.style={draw, rounded corners, thick, minimum width=2.5cm, minimum height=1.5cm, align=center, font=\sffamily\small\bfseries},
+    smallbox/.style={draw, rounded corners, thick, minimum width=2cm, minimum height=1.2cm, align=center, font=\sffamily\small\bfseries},
+    arr/.style={-{Stealth[length=3mm]}, thick},
+    lbl/.style={font=\sffamily\scriptsize, align=center, fill=white, inner sep=1pt},
+]
+
+% Nodes
+\node[box] (et) {Estación\\Terrestre};
+\node[box, right=of et] (esp) {ESP32};
+\node[box, right=of esp] (cv) {Controlador\\de Vuelo};
+\node[smallbox, above=2cm of esp] (gps) {Módulo\\GPS};
+
+% Telemetry: CV -> ESP32 -> ET (top arrows)
+\draw[arr, blue!70!black] ([yshift=0.3cm]cv.west) -- node[lbl, above] {Telemetría 52\,B} node[lbl, below] {\tiny UART} ([yshift=0.3cm]esp.east);
+\draw[arr, blue!70!black] ([yshift=0.3cm]esp.west) -- node[lbl, above] {Telemetría 52\,B} node[lbl, below] {\tiny LoRa} ([yshift=0.3cm]et.east);
+
+% Commands: ET -> ESP32 -> CV (bottom arrows)
+\draw[arr, red!70!black] ([yshift=-0.3cm]et.east) -- node[lbl, above] {\tiny LoRa} node[lbl, below] {Comandos 5\,B} ([yshift=-0.3cm]esp.west);
+\draw[arr, red!70!black] ([yshift=-0.3cm]esp.east) -- node[lbl, above] {\tiny UART} node[lbl, below] {Comandos 5\,B} ([yshift=-0.3cm]cv.west);
+
+% GPS: GPS -> ESP32 -> CV
+\draw[arr, green!50!black] (gps.south) -- node[lbl, right, xshift=2pt] {NMEA} (esp.north);
+\draw[arr, green!50!black, dashed] ([yshift=0.7cm]esp.east) -- node[lbl, above] {GPS 24\,B} node[lbl, below] {\tiny UART} ([yshift=0.7cm]cv.west);
+
+\end{tikzpicture}%
+}
+\caption{Flujo de datos. Línea punteada = trama construida por ESP32.}
+\end{figure}
+
+% ============================================================================
+\section{Telemetría (CV $\rightarrow$ ESP32 $\rightarrow$ ET)}
+
+Paquete de \textbf{52 bytes}. El ESP32 lo reenvía por LoRa \textbf{sin modificación}. No tiene bytes CMD ni LEN -- solo sync word y footer.
+
+\begin{longtable}{@{}ccllp{4.5cm}@{}}
+\toprule
+\textbf{Offset} & \textbf{Bytes} & \textbf{Tipo} & \textbf{Campo} & \textbf{Codificación} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Offset} & \textbf{Bytes} & \textbf{Tipo} & \textbf{Campo} & \textbf{Codificación} \\
+\midrule
+\endhead
+0  & 2 & \texttt{uint16} & Sync             & \texttt{0xCAFE} \\
+2  & 4 & \texttt{uint32} & Tick             & ms (crudo) \\
+6  & 2 & \texttt{int16}  & AccelX           & m/s\textsuperscript{2} truncado \\
+8  & 2 & \texttt{int16}  & AccelY           & m/s\textsuperscript{2} truncado \\
+10 & 2 & \texttt{int16}  & AccelZ           & m/s\textsuperscript{2} truncado \\
+12 & 2 & \texttt{int16}  & GyroX            & deg/s truncado \\
+14 & 2 & \texttt{int16}  & GyroY            & deg/s truncado \\
+16 & 2 & \texttt{int16}  & GyroZ            & deg/s truncado \\
+18 & 2 & \texttt{int16}  & PressurePa       & Pa $\div$ 10 \\
+20 & 1 & \texttt{int8}   & TemperatureC     & \textdegree C truncado \\
+21 & 4 & \texttt{int32}  & Latitude         & deg $\times$ 10\textsuperscript{7} \\
+25 & 4 & \texttt{int32}  & Longitude        & deg $\times$ 10\textsuperscript{7} \\
+29 & 4 & \texttt{int32}  & GPSAltitude      & m $\times$ 100 \\
+33 & 1 & \texttt{uint8}  & Satellites       & crudo \\
+34 & 4 & \texttt{int32}  & BaroAltitude     & m $\times$ 100 \\
+38 & 4 & \texttt{int32}  & BaroVelocity     & m/s $\times$ 100 \\
+42 & 4 & \texttt{uint32} & FaultFlags       & máscara de bits \\
+46 & 2 & \texttt{int16}  & BatteryVoltage   & V $\times$ 10 \\
+48 & 1 & \texttt{uint8}  & State            & enum \\
+49 & 1 & \texttt{uint8}  & RelayState       & máscara de bits \\
+50 & 1 & \texttt{uint8}  & LastCommand      & enum \\
+51 & 1 & \texttt{uint8}  & SyncEnd          & \texttt{0xBE} \\
+\bottomrule
+\caption{Paquete de telemetría (52 bytes).}
+\end{longtable}
+
+\subsection{Pseudocódigo: recepción de telemetría en ESP32}
+
+\begin{lstlisting}[language=C, caption={ESP32: recibir telemetría y reenviar por LoRa.}]
+// Buffer circular UART. Buscar sync word 0xFE 0xCA.
+// Cuando se detecta, leer 52 bytes totales (incluyendo sync).
+// Verificar que byte[51] == 0xBE (footer).
+// Si es valido, enviar los 52 bytes por LoRa sin modificar.
+// Si el footer no coincide, descartar y seguir buscando sync.
+
+#define TELEMETRY_SIZE 52
+
+if (uart_byte == 0xFE) {
+    buffer[0] = 0xFE;
+    uart_read(buffer + 1, TELEMETRY_SIZE - 1);
+    if (buffer[1] == 0xCA && buffer[51] == 0xBE) {
+        lora_send(buffer, TELEMETRY_SIZE);
+    }
+}
+\end{lstlisting}
+
+
+% ============================================================================
+\section{Comandos (ET $\rightarrow$ ESP32 $\rightarrow$ CV)}
+
+El ESP32 reenvía los bytes crudos recibidos por LoRa directamente al UART. \textbf{Sin parseo, sin validación, sin reempaquetado.}
+
+Trama de \textbf{5 bytes} (comandos del operador no llevan payload):
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}cccll@{}}
+\toprule
+\textbf{Offset} & \textbf{Bytes} & \textbf{Tipo} & \textbf{Valor} & \textbf{Descripción} \\
+\midrule
+0 & 1 & \texttt{uint8} & \texttt{0xFE} & Sync LSB \\
+1 & 1 & \texttt{uint8} & \texttt{0xCA} & Sync MSB \\
+2 & 1 & \texttt{uint8} & CMD            & Tipo de comando \\
+3 & 1 & \texttt{uint8} & \texttt{0x00}  & Longitud payload (cero) \\
+4 & 1 & \texttt{uint8} & \texttt{0xBE}  & Footer \\
+\bottomrule
+\end{tabular}
+\caption{Trama de comando (5 bytes).}
+\end{table}
+
+Valores válidos de CMD para comandos del operador:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}cl@{}}
+\toprule
+\textbf{CMD} & \textbf{Acción} \\
+\midrule
+\texttt{0x01} & Reset \\
+\texttt{0x02} & Aborto en tierra \\
+\texttt{0x03} & Calibración \\
+\texttt{0x04} & Drogue \\
+\texttt{0x05} & Aterrizado \\
+\bottomrule
+\end{tabular}
+\caption{Comandos del operador.}
+\end{table}
+
+
+% ============================================================================
+\section{Datos GPS (GPS $\rightarrow$ ESP32 $\rightarrow$ CV)}
+
+Única trama que el ESP32 \textbf{construye}. Parsea la sentencia NMEA \textbf{GGA} (\texttt{\$GPGGA} o \texttt{\$GNGGA}) del módulo GPS y empaqueta en una trama de comando con tipo \texttt{0x20}. \textbf{24 bytes} totales.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}cccll@{}}
+\toprule
+\textbf{Offset} & \textbf{Bytes} & \textbf{Tipo} & \textbf{Valor} & \textbf{Descripción} \\
+\midrule
+0  & 1 & \texttt{uint8} & \texttt{0xFE}  & Sync LSB \\
+1  & 1 & \texttt{uint8} & \texttt{0xCA}  & Sync MSB \\
+2  & 1 & \texttt{uint8} & \texttt{0x20}  & Comando GPS \\
+3  & 1 & \texttt{uint8} & \texttt{0x13}  & Longitud payload (19) \\
+4--22 & 19 & --         & --            & Payload GPS \\
+23 & 1 & \texttt{uint8} & \texttt{0xBE}  & Footer \\
+\bottomrule
+\end{tabular}
+\caption{Trama GPS (24 bytes).}
+\end{table}
+
+\subsection{Payload GPS (19 bytes)}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}ccclll@{}}
+\toprule
+\textbf{Offset} & \textbf{Bytes} & \textbf{Tipo} & \textbf{Campo} & \textbf{Unidad} & \textbf{Notas} \\
+\midrule
+0  & 4 & \texttt{uint32} & UnixTime     & Segundos      & Segundos del día (de GGA) \\
+4  & 2 & \texttt{uint16} & Milliseconds & ms            & 0--999 \\
+6  & 4 & \texttt{int32}  & Latitude     & deg $\times 10^7$ & \\
+10 & 4 & \texttt{int32}  & Longitude    & deg $\times 10^7$ & \\
+14 & 4 & \texttt{int32}  & Altitude     & mm            & Sobre nivel del mar \\
+18 & 1 & \texttt{uint8}  & Satellites   & Cantidad      & \\
+\bottomrule
+\end{tabular}
+\caption{Payload GPS (19 bytes).}
+\end{table}
+
+\subsection{Pseudocódigo: construcción de trama GPS en ESP32}
+
+\begin{lstlisting}[language=C, caption={ESP32: parsear GGA y construir trama GPS.}]
+// Sentencia GGA:
+// $GNGGA,134523.500,4042.7688,N,07400.3600,W,1,08,1.0,30.5,M,-34.0,M,,*5E
+//        ^^^^^^^^^^  ^^^^^^^^^^ ^ ^^^^^^^^^^^ ^ ^ ^^ ^^^ ^^^^
+//        HHMMSS.sss  ddmm.mmmm   dddmm.mmmm     sat   alt(m)
+
+// 1. Parsear hora: "134523.500"
+uint32_t hours = 13, minutes = 45, seconds = 23, ms = 500;
+uint32_t unix_time = hours * 3600 + minutes * 60 + seconds;
+uint16_t milliseconds = ms;
+
+// 2. Parsear latitud: "4042.7688,N"
+//    dd = 40, mm.mmmm = 42.7688
+//    grados = 40 + 42.7688 / 60 = 40.712813
+//    N = positivo, S = negativo
+int32_t latitude = (int32_t)(40.712813 * 1e7);  // 407128130
+
+// 3. Parsear longitud: "07400.3600,W"
+//    ddd = 074, mm.mmmm = 00.3600
+//    grados = 74 + 00.3600 / 60 = 74.006000
+//    W = negativo
+int32_t longitude = (int32_t)(-74.006000 * 1e7);  // -740060000
+
+// 4. Parsear altitud: "30.5" metros
+int32_t altitude_mm = (int32_t)(30.5 * 1000);  // 30500
+
+// 5. Parsear satelites: "08"
+uint8_t satellites = 8;
+
+// 6. Empaquetar payload (19 bytes, little-endian)
+uint8_t payload[19];
+memcpy(payload + 0,  &unix_time,    4);  // uint32 LE
+memcpy(payload + 4,  &milliseconds, 2);  // uint16 LE
+memcpy(payload + 6,  &latitude,     4);  // int32  LE
+memcpy(payload + 10, &longitude,    4);  // int32  LE
+memcpy(payload + 14, &altitude_mm,  4);  // int32  LE
+payload[18] = satellites;
+
+// 7. Construir trama completa (24 bytes)
+uint8_t frame[24];
+frame[0]  = 0xFE;          // sync LSB
+frame[1]  = 0xCA;          // sync MSB
+frame[2]  = 0x20;          // COMMAND_GPS_DATA
+frame[3]  = 0x13;          // payload length = 19
+memcpy(frame + 4, payload, 19);
+frame[23] = 0xBE;          // footer
+
+// 8. Enviar por UART al controlador de vuelo
+uart_write(frame, 24);
+\end{lstlisting}
+
+% ============================================================================
+\section{Resumen}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}llcll@{}}
+\toprule
+\textbf{Datos} & \textbf{Dirección} & \textbf{Tamaño} & \textbf{ESP32} & \textbf{ET} \\
+\midrule
+Telemetría & CV $\rightarrow$ ET & 52\,B & Passthrough & Passthrough \\
+Comandos   & ET $\rightarrow$ CV & 5\,B  & Passthrough & Passthrough \\
+GPS        & GPS $\rightarrow$ CV & 24\,B & Construir trama & No involucrada \\
+\bottomrule
+\end{tabular}
+\caption{CV = Controlador de Vuelo, ET = Estación Terrestre.}
+\end{table}
+
+\section{Estación Terrestre}
+
+La estación terrestre es un passthrough bidireccional entre el módulo LoRa y una interfaz de usuario conectada por serial.
+
+\begin{itemize}
+    \item \textbf{Telemetría:} recibe los 52 bytes por LoRa y los escribe tal cual por serial para que la interfaz de usuario los lea y decodifique.
+    \item \textbf{Comandos:} recibe los 5 bytes por serial desde la interfaz de usuario y los envía tal cual por LoRa.
+\end{itemize}
+
+La estación terrestre no parsea, valida ni modifica ningún paquete. Toda la lógica de decodificación y construcción de comandos está en la interfaz de usuario.
+
+\end{document}
