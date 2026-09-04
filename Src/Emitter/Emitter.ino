@@ -16,6 +16,7 @@
 
 #define TELEMETRY_SIZE 52
 #define TELEMETRY_INTERVAL_MS 1000
+#define CMD_LISTEN_WINDOW_MS 50
 
 LoRa_E32 e32ttl(&Serial2, PIN_AUX, PIN_M0, PIN_M1);
 HardwareSerial SerialCV(1);
@@ -25,7 +26,42 @@ unsigned long ultimoGPS = 0;
 unsigned long ultimoTX = 0;
 
 uint8_t telBuffer[TELEMETRY_SIZE];
+uint8_t telRxIdx = 0;
 bool telReady = false;
+
+static void waitAuxHigh() {
+  unsigned long t0 = millis();
+  while (digitalRead(PIN_AUX) == LOW) {
+    if (millis() - t0 > 200) break;
+  }
+}
+
+static void checkAndForwardCommands() {
+  while (Serial2.available() >= 5) {
+    if (Serial2.peek() != 0xFE) {
+      Serial2.read();
+      continue;
+    }
+
+    uint8_t cmd[5];
+    Serial2.readBytes(cmd, 5);
+
+    Serial.print(F("CMD bytes: "));
+    for (int i = 0; i < 5; i++) {
+      Serial.print(cmd[i], HEX);
+      Serial.print(' ');
+    }
+    Serial.println();
+
+    if (cmd[1] == 0xCA && cmd[4] == 0xBE) {
+      SerialCV.write(cmd, 5);
+      Serial.print(F("CMD FWD: 0x"));
+      Serial.println(cmd[2], HEX);
+    } else {
+      Serial.println(F("CMD INVALID frame"));
+    }
+  }
+}
 
 void setup() {
   Serial.begin(115200);
@@ -41,71 +77,71 @@ void setup() {
     miGPS.setI2COutput(COM_TYPE_UBX);
     miGPS.setDynamicModel(DYN_MODEL_AIRBORNE4g);
     miGPS.setNavigationFrequency(1);
+    miGPS.setAutoPVT(true);
   }
 }
 
 void loop() {
   // ========================================================
-  // 1. BUFFER TELEMETRY FROM CV (non-blocking)
+  // 1. BUFFER TELEMETRY FROM CV (non-blocking accumulation)
   // ========================================================
-  if (SerialCV.available() >= TELEMETRY_SIZE) {
-    if (SerialCV.peek() == 0xFE) {
-      SerialCV.readBytes(telBuffer, TELEMETRY_SIZE);
-      if (telBuffer[1] == 0xCA && telBuffer[TELEMETRY_SIZE - 1] == 0xBE) {
+  while (SerialCV.available()) {
+    uint8_t b = SerialCV.read();
+
+    if (telRxIdx == 0) {
+      if (b == 0xFE) telBuffer[telRxIdx++] = b;
+      continue;
+    }
+
+    if (telRxIdx == 1) {
+      if (b == 0xCA) {
+        telBuffer[telRxIdx++] = b;
+      } else {
+        telRxIdx = 0;
+      }
+      continue;
+    }
+
+    telBuffer[telRxIdx++] = b;
+
+    if (telRxIdx == TELEMETRY_SIZE) {
+      if (telBuffer[TELEMETRY_SIZE - 1] == 0xBE) {
         telReady = true;
       }
-    } else {
-      SerialCV.read();
+      telRxIdx = 0;
     }
   }
 
   // ========================================================
-  // 2. COMMANDS: LoRa -> CV (PRIORITY, checked first)
+  // 2. COMMANDS: LoRa -> CV (checked every iteration)
   // ========================================================
-  if (digitalRead(PIN_AUX) == HIGH && Serial2.available() >= 5) {
-    while (Serial2.available()) {
-      if (Serial2.read() == 0xFE) {
-        if (Serial2.available() >= 4) {
-          uint8_t cmd[5];
-          cmd[0] = 0xFE;
-          Serial2.readBytes(cmd + 1, 4);
-
-          Serial.print(F("CMD bytes: "));
-          for (int i = 0; i < 5; i++) {
-            Serial.print(cmd[i], HEX);
-            Serial.print(' ');
-          }
-          Serial.println();
-
-          if (cmd[1] == 0xCA && cmd[4] == 0xBE) {
-            SerialCV.write(cmd, 5);
-            Serial.print(F("CMD FWD: 0x"));
-            Serial.println(cmd[2], HEX);
-          } else {
-            Serial.println(F("CMD INVALID frame"));
-          }
-        }
-        break;
-      }
-    }
+  if (digitalRead(PIN_AUX) == HIGH) {
+    checkAndForwardCommands();
   }
 
   // ========================================================
-  // 3. TELEMETRY TX: rate-limited, AUX-gated
+  // 3. TELEMETRY TX: rate-limited, AUX-gated, with listen window
   // ========================================================
   if (telReady && digitalRead(PIN_AUX) == HIGH && (millis() - ultimoTX >= TELEMETRY_INTERVAL_MS)) {
     e32ttl.sendMessage(telBuffer, TELEMETRY_SIZE);
     ultimoTX = millis();
     telReady = false;
+
+    waitAuxHigh();
+
+    unsigned long listenStart = millis();
+    while (millis() - listenStart < CMD_LISTEN_WINDOW_MS) {
+      checkAndForwardCommands();
+    }
   }
 
   // ========================================================
-  // 4. GPS: I2C -> ESP32 -> Trama (24B) -> CV
+  // 4. GPS: I2C -> ESP32 -> Trama (24B) -> CV (non-blocking)
   // ========================================================
   if (millis() - ultimoGPS >= 1000) {
     ultimoGPS = millis();
 
-    if (miGPS.getPVT()) {
+    if (miGPS.getPVT(0)) {
       uint32_t unix_time = miGPS.getHour() * 3600UL + miGPS.getMinute() * 60UL + miGPS.getSecond();
       uint16_t milliseconds = miGPS.getMillisecond();
       int32_t latitude = miGPS.getLatitude();
