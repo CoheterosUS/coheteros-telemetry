@@ -14,12 +14,18 @@
 
 #define TELEMETRY_SIZE 52
 #define COMMAND_SIZE 5
+#define LAST_COMMAND_OFFSET 50
+#define CMD_RETRY_INTERVAL_MS 500
 
 SoftwareSerial loraSerial(PIN_RX, PIN_TX);
 LoRa_E32 e32ttl(&loraSerial, PIN_AUX, PIN_M0, PIN_M1);
 
 uint8_t telRxBuf[TELEMETRY_SIZE];
 uint8_t telRxIdx = 0;
+
+uint8_t pendingCmd[COMMAND_SIZE];
+bool cmdPending = false;
+unsigned long lastCmdSendMs = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -54,20 +60,38 @@ void loop() {
     if (telRxIdx == TELEMETRY_SIZE) {
       if (telRxBuf[TELEMETRY_SIZE - 1] == 0xBE) {
         Serial.write(telRxBuf, TELEMETRY_SIZE);
+
+        if (cmdPending && telRxBuf[LAST_COMMAND_OFFSET] == pendingCmd[2]) {
+          cmdPending = false;
+        }
       }
       telRxIdx = 0;
     }
   }
 
   // ========================================================
-  // 2. COMMANDS: Serial -> LoRa (AUX-gated)
+  // 2. COMMANDS: Serial -> LoRa (AUX-gated, with retry)
   // ========================================================
-  if (Serial.available() >= COMMAND_SIZE && digitalRead(PIN_AUX) == HIGH) {
+  if (Serial.available() >= COMMAND_SIZE) {
     uint8_t cmd[COMMAND_SIZE];
     Serial.readBytes(cmd, COMMAND_SIZE);
 
     if (cmd[0] == 0xFE && cmd[1] == 0xCA && cmd[4] == 0xBE) {
-      e32ttl.sendMessage(cmd, COMMAND_SIZE);
+      if (cmd[2] == 0x10 || cmd[2] == 0x20) {
+        if (digitalRead(PIN_AUX) == HIGH) {
+          e32ttl.sendMessage(cmd, COMMAND_SIZE);
+        }
+      } else {
+        memcpy(pendingCmd, cmd, COMMAND_SIZE);
+        cmdPending = true;
+        lastCmdSendMs = 0;
+      }
     }
+  }
+
+  if (cmdPending && digitalRead(PIN_AUX) == HIGH &&
+      (millis() - lastCmdSendMs >= CMD_RETRY_INTERVAL_MS)) {
+    e32ttl.sendMessage(pendingCmd, COMMAND_SIZE);
+    lastCmdSendMs = millis();
   }
 }
