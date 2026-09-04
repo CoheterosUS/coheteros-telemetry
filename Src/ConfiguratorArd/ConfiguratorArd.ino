@@ -2,9 +2,9 @@
 #include <SoftwareSerial.h>
 
 
-#define PIN_RX_LORA 3
-#define PIN_TX_LORA 2
-#define PIN_AUX 7
+#define PIN_RX_LORA 8
+#define PIN_TX_LORA 9
+#define PIN_AUX 4
 #define PIN_M0 5
 #define PIN_M1 6
 
@@ -18,6 +18,11 @@ void setup() {
   loraSerial.begin(9600);
   e32ttl.begin();
 
+  pinMode(PIN_M0, OUTPUT);
+  pinMode(PIN_M1, OUTPUT);
+
+  digitalWrite(PIN_M0, HIGH);
+  digitalWrite(PIN_M1, HIGH);
   Serial.println(F("--- INTENTO DE CONFIGURACION ---"));
 
   ResponseStructContainer rsc = e32ttl.getConfiguration();
@@ -45,7 +50,7 @@ void setup() {
   configuration.OPTION.ioDriveMode = IO_D_MODE_PUSH_PULLS_PULL_UPS;
 
   ResponseStatus rs =
-      e32ttl.setConfiguration(configuration, WRITE_CFG_PWR_DWN_SAVE);
+    e32ttl.setConfiguration(configuration, WRITE_CFG_PWR_DWN_SAVE);
 
   if (rs.code == 1) {
     Serial.println(F("====================================="));

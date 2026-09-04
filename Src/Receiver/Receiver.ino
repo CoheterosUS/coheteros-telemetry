@@ -6,8 +6,8 @@
 #include <SoftwareSerial.h>
 #include "LoRa_E32.h"
 
-#define PIN_RX 2   // Connect to E32 TX
-#define PIN_TX 3   // Connect to E32 RX
+#define PIN_RX 8   // Connect to E32 TX
+#define PIN_TX 9   // Connect to E32 RX
 #define PIN_AUX 4
 #define PIN_M0 5
 #define PIN_M1 6
