@@ -1,7 +1,8 @@
 // ***** ESP32 COMMS HUB (Protocolo Coheteros) *****
-#include <Wire.h>
-#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 #include "LoRa_E32.h"
+#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
+#include <Wire.h>
+
 
 // Pines LoRa EBYTE (UART2)
 #define PIN_RX_LORA 16
@@ -11,8 +12,8 @@
 #define PIN_M1 26
 
 // Pines Controlador de Vuelo STM32 (UART1)
-#define PIN_RX_CV 18
-#define PIN_TX_CV 19
+#define PIN_RX_CV 19
+#define PIN_TX_CV 18
 
 #define TELEMETRY_SIZE 52
 #define TELEMETRY_INTERVAL_MS 1000
@@ -32,7 +33,8 @@ bool telReady = false;
 static void waitAuxHigh() {
   unsigned long t0 = millis();
   while (digitalRead(PIN_AUX) == LOW) {
-    if (millis() - t0 > 200) break;
+    if (millis() - t0 > 200)
+      break;
   }
 }
 
@@ -65,20 +67,33 @@ static void checkAndForwardCommands() {
 
 void setup() {
   Serial.begin(115200);
+  delay(500);
+  Serial.println(F("\n[BOOT] Emitter starting..."));
+
   pinMode(PIN_AUX, INPUT);
 
+  Serial.println(F("[BOOT] LoRa UART init..."));
   Serial2.begin(9600, SERIAL_8N1, PIN_RX_LORA, PIN_TX_LORA);
   e32ttl.begin();
+  Serial.println(F("[BOOT] LoRa OK"));
 
+  Serial.println(F("[BOOT] CV UART init..."));
   SerialCV.begin(115200, SERIAL_8N1, PIN_RX_CV, PIN_TX_CV);
+  Serial.println(F("[BOOT] CV OK"));
 
+  Serial.println(F("[BOOT] GPS init..."));
   Wire.begin(21, 22);
   if (miGPS.begin()) {
     miGPS.setI2COutput(COM_TYPE_UBX);
     miGPS.setDynamicModel(DYN_MODEL_AIRBORNE4g);
     miGPS.setNavigationFrequency(1);
     miGPS.setAutoPVT(true);
+    Serial.println(F("[BOOT] GPS OK"));
+  } else {
+    Serial.println(F("[BOOT] GPS NOT FOUND"));
   }
+
+  Serial.println(F("[BOOT] Ready"));
 }
 
 void loop() {
@@ -88,8 +103,14 @@ void loop() {
   while (SerialCV.available()) {
     uint8_t b = SerialCV.read();
 
+    if (b < 0x10)
+      Serial.print('0');
+    Serial.print(b, HEX);
+    Serial.print(' ');
+
     if (telRxIdx == 0) {
-      if (b == 0xFE) telBuffer[telRxIdx++] = b;
+      if (b == 0xFE)
+        telBuffer[telRxIdx++] = b;
       continue;
     }
 
@@ -105,6 +126,7 @@ void loop() {
     telBuffer[telRxIdx++] = b;
 
     if (telRxIdx == TELEMETRY_SIZE) {
+      Serial.println(F("<-- TEL FRAME"));
       if (telBuffer[TELEMETRY_SIZE - 1] == 0xBE) {
         telReady = true;
       }
@@ -122,7 +144,8 @@ void loop() {
   // ========================================================
   // 3. TELEMETRY TX: rate-limited, AUX-gated, with listen window
   // ========================================================
-  if (telReady && digitalRead(PIN_AUX) == HIGH && (millis() - ultimoTX >= TELEMETRY_INTERVAL_MS)) {
+  if (telReady && digitalRead(PIN_AUX) == HIGH &&
+      (millis() - ultimoTX >= TELEMETRY_INTERVAL_MS)) {
     e32ttl.sendMessage(telBuffer, TELEMETRY_SIZE);
     ultimoTX = millis();
     telReady = false;
@@ -142,7 +165,8 @@ void loop() {
     ultimoGPS = millis();
 
     if (miGPS.getPVT(0)) {
-      uint32_t unix_time = miGPS.getHour() * 3600UL + miGPS.getMinute() * 60UL + miGPS.getSecond();
+      uint32_t unix_time = miGPS.getHour() * 3600UL + miGPS.getMinute() * 60UL +
+                           miGPS.getSecond();
       uint16_t milliseconds = miGPS.getMillisecond();
       int32_t latitude = miGPS.getLatitude();
       int32_t longitude = miGPS.getLongitude();
