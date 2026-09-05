@@ -23,11 +23,11 @@ Any agent that reads this file should not assume that any information is correct
 | 0     | IDLE             |
 | 1     | CALIBRATION      |
 | 2     | PRELAUNCH        |
-| 3     | BURN             |
-| 4     | PASSIVE_BURNOUT  |
-| 5     | ACTIVE_BURNOUT   |
+| 3     | BOOST            |
+| 4     | COAST            |
+| 5     | ACTIVE_CONTROL   |
 | 6     | APOGEE           |
-| 7     | PARACHUTE        |
+| 7     | MAIN_PARACHUTE   |
 | 8     | LANDED           |
 | 9     | GROUND_ABORT     |
 | 10    | DESCENT_ABORT    |
