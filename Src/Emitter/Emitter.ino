@@ -82,7 +82,7 @@ void setup() {
   Serial.println(F("[BOOT] CV OK"));
 
   Serial.println(F("[BOOT] GPS init..."));
-  Wire.begin(21, 22);
+  Wire.begin(22, 21);
   if (miGPS.begin()) {
     miGPS.setI2COutput(COM_TYPE_UBX);
     miGPS.setDynamicModel(DYN_MODEL_AIRBORNE4g);
@@ -103,11 +103,6 @@ void loop() {
   while (SerialCV.available()) {
     uint8_t b = SerialCV.read();
 
-    if (b < 0x10)
-      Serial.print('0');
-    Serial.print(b, HEX);
-    Serial.print(' ');
-
     if (telRxIdx == 0) {
       if (b == 0xFE)
         telBuffer[telRxIdx++] = b;
@@ -126,8 +121,8 @@ void loop() {
     telBuffer[telRxIdx++] = b;
 
     if (telRxIdx == TELEMETRY_SIZE) {
-      Serial.println(F("<-- TEL FRAME"));
       if (telBuffer[TELEMETRY_SIZE - 1] == 0xBE) {
+        Serial.write(telBuffer, TELEMETRY_SIZE);
         telReady = true;
       }
       telRxIdx = 0;
