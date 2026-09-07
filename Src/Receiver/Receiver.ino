@@ -23,6 +23,12 @@ LoRa_E32 e32ttl(&loraSerial, PIN_AUX, PIN_M0, PIN_M1);
 uint8_t telRxBuf[TELEMETRY_SIZE];
 uint8_t telRxIdx = 0;
 
+uint8_t pendingCmd[COMMAND_SIZE];
+bool cmdPending = false;
+unsigned long lastCmdSendMs = 0;
+unsigned long cmdDeadlineMs = 0;
+#define CMD_RETRY_DURATION_MS 5000
+
 void setup() {
   Serial.begin(115200);
   pinMode(PIN_AUX, INPUT);
@@ -118,13 +124,18 @@ void loop() {
         memcpy(pendingCmd, cmd, COMMAND_SIZE);
         cmdPending = true;
         lastCmdSendMs = 0;
+        cmdDeadlineMs = millis() + CMD_RETRY_DURATION_MS;
       }
     }
   }
 
-  if (cmdPending && digitalRead(PIN_AUX) == HIGH && 
-      (millis() - lastCmdSendMs >= CMD_RETRY_INTERVAL_MS)) {
-    e32ttl.sendMessage(pendingCmd, COMMAND_SIZE);
-    lastCmdSendMs = millis();
+  if (cmdPending) {
+    if (millis() >= cmdDeadlineMs) {
+      cmdPending = false;
+    } else if (digitalRead(PIN_AUX) == HIGH &&
+               (millis() - lastCmdSendMs >= CMD_RETRY_INTERVAL_MS)) {
+      e32ttl.sendMessage(pendingCmd, COMMAND_SIZE);
+      lastCmdSendMs = millis();
+    }
   }
 }

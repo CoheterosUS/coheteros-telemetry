@@ -17,8 +17,6 @@
 
 #define TELEMETRY_SIZE 52
 #define TELEMETRY_INTERVAL_MS 1000
-#define CMD_LISTEN_WINDOW_MS 50
-
 LoRa_E32 e32ttl(&Serial2, PIN_AUX, PIN_M0, PIN_M1);
 HardwareSerial SerialCV(1);
 SFE_UBLOX_GNSS miGPS;
@@ -26,17 +24,10 @@ SFE_UBLOX_GNSS miGPS;
 unsigned long ultimoGPS = 0;
 unsigned long ultimoTX = 0;
 
-uint8_t telBuffer[TELEMETRY_SIZE];
+uint8_t telRxBuf[TELEMETRY_SIZE];
+uint8_t telTxBuf[TELEMETRY_SIZE];
 uint8_t telRxIdx = 0;
 bool telReady = false;
-
-static void waitAuxHigh() {
-  unsigned long t0 = millis();
-  while (digitalRead(PIN_AUX) == LOW) {
-    if (millis() - t0 > 200)
-      break;
-  }
-}
 
 static void checkAndForwardCommands() {
   while (Serial2.available() >= 5) {
@@ -71,10 +62,17 @@ void setup() {
   Serial.println(F("\n[BOOT] Emitter starting..."));
 
   pinMode(PIN_AUX, INPUT);
+  pinMode(PIN_M0, OUTPUT);
+  pinMode(PIN_M1, OUTPUT);
 
   Serial.println(F("[BOOT] LoRa UART init..."));
   Serial2.begin(9600, SERIAL_8N1, PIN_RX_LORA, PIN_TX_LORA);
   e32ttl.begin();
+
+  // Enter configuration mode: M0=HIGH, M1=HIGH
+  digitalWrite(PIN_M0, HIGH);
+  digitalWrite(PIN_M1, HIGH);
+  delay(50);
 
   // Configure LoRa module (library manages M0/M1 automatically on ESP32)
   Serial.println(F("[BOOT] LoRa configuring..."));
@@ -124,6 +122,11 @@ void setup() {
     Serial.println(F("[BOOT] GPS NOT FOUND"));
   }
 
+  // Exit configuration mode: M0=LOW, M1=LOW (normal/transparent)
+  digitalWrite(PIN_M0, LOW);
+  digitalWrite(PIN_M1, LOW);
+  delay(50);
+
   Serial.println(F("[BOOT] Ready"));
 }
 
@@ -136,24 +139,25 @@ void loop() {
 
     if (telRxIdx == 0) {
       if (b == 0xFE)
-        telBuffer[telRxIdx++] = b;
+        telRxBuf[telRxIdx++] = b;
       continue;
     }
 
     if (telRxIdx == 1) {
       if (b == 0xCA) {
-        telBuffer[telRxIdx++] = b;
+        telRxBuf[telRxIdx++] = b;
       } else {
         telRxIdx = 0;
       }
       continue;
     }
 
-    telBuffer[telRxIdx++] = b;
+    telRxBuf[telRxIdx++] = b;
 
     if (telRxIdx == TELEMETRY_SIZE) {
-      if (telBuffer[TELEMETRY_SIZE - 1] == 0xBE) {
-        Serial.write(telBuffer, TELEMETRY_SIZE);
+      if (telRxBuf[TELEMETRY_SIZE - 1] == 0xBE) {
+        memcpy(telTxBuf, telRxBuf, TELEMETRY_SIZE);
+        Serial.write(telTxBuf, TELEMETRY_SIZE);
         telReady = true;
       }
       telRxIdx = 0;
@@ -172,16 +176,9 @@ void loop() {
   // ========================================================
   if (telReady && digitalRead(PIN_AUX) == HIGH &&
       (millis() - ultimoTX >= TELEMETRY_INTERVAL_MS)) {
-    e32ttl.sendMessage(telBuffer, TELEMETRY_SIZE);
+    e32ttl.sendMessage(telTxBuf, TELEMETRY_SIZE);
     ultimoTX = millis();
     telReady = false;
-
-    waitAuxHigh();
-
-    unsigned long listenStart = millis();
-    while (millis() - listenStart < CMD_LISTEN_WINDOW_MS) {
-      checkAndForwardCommands();
-    }
   }
 
   // ========================================================
