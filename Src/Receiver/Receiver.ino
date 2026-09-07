@@ -26,8 +26,49 @@ uint8_t telRxIdx = 0;
 void setup() {
   Serial.begin(115200);
   pinMode(PIN_AUX, INPUT);
+  pinMode(PIN_M0, OUTPUT);
+  pinMode(PIN_M1, OUTPUT);
+
   loraSerial.begin(9600);
   e32ttl.begin();
+
+  // Enter configuration mode: M0=HIGH, M1=HIGH
+  digitalWrite(PIN_M0, HIGH);
+  digitalWrite(PIN_M1, HIGH);
+  delay(50);
+
+  ResponseStructContainer rsc = e32ttl.getConfiguration();
+  if (rsc.status.code == 1) {
+    Configuration configuration = *(Configuration*) rsc.data;
+    rsc.close();
+
+    configuration.ADDH = 0x00;
+    configuration.ADDL = 0x01;
+    configuration.CHAN = 0x06;
+    configuration.SPED.uartBaudRate = UART_BPS_9600;
+    configuration.SPED.airDataRate = AIR_DATA_RATE_010_24;
+    configuration.OPTION.transmissionPower = POWER_10;
+    configuration.OPTION.fec = FEC_1_ON;
+    configuration.OPTION.fixedTransmission = FT_TRANSPARENT_TRANSMISSION;
+    configuration.OPTION.wirelessWakeupTime = WAKE_UP_250;
+    configuration.OPTION.ioDriveMode = IO_D_MODE_PUSH_PULLS_PULL_UPS;
+
+    ResponseStatus rs = e32ttl.setConfiguration(configuration, WRITE_CFG_PWR_DWN_SAVE);
+    if (rs.code == 1) {
+      Serial.println(F("[BOOT] LoRa configured OK"));
+    } else {
+      Serial.print(F("[BOOT] LoRa config FAILED: "));
+      Serial.println(rs.getResponseDescription());
+    }
+  } else {
+    Serial.println(F("[BOOT] LoRa config read FAILED"));
+    rsc.close();
+  }
+
+  // Exit configuration mode: M0=LOW, M1=LOW (normal/transparent)
+  digitalWrite(PIN_M0, LOW);
+  digitalWrite(PIN_M1, LOW);
+  delay(50);
 }
 
 void loop() {

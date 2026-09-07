@@ -75,6 +75,37 @@ void setup() {
   Serial.println(F("[BOOT] LoRa UART init..."));
   Serial2.begin(9600, SERIAL_8N1, PIN_RX_LORA, PIN_TX_LORA);
   e32ttl.begin();
+
+  // Configure LoRa module (library manages M0/M1 automatically on ESP32)
+  Serial.println(F("[BOOT] LoRa configuring..."));
+  ResponseStructContainer rsc = e32ttl.getConfiguration();
+  if (rsc.status.code == 1) {
+    Configuration configuration = *(Configuration*) rsc.data;
+    rsc.close();
+
+    configuration.ADDH = 0x00;
+    configuration.ADDL = 0x01;
+    configuration.CHAN = 0x06;
+    configuration.SPED.uartBaudRate = UART_BPS_9600;
+    configuration.SPED.airDataRate = AIR_DATA_RATE_010_24;
+    configuration.OPTION.transmissionPower = POWER_10;
+    configuration.OPTION.fec = FEC_1_ON;
+    configuration.OPTION.fixedTransmission = FT_TRANSPARENT_TRANSMISSION;
+    configuration.OPTION.wirelessWakeupTime = WAKE_UP_250;
+    configuration.OPTION.ioDriveMode = IO_D_MODE_PUSH_PULLS_PULL_UPS;
+
+    ResponseStatus rs = e32ttl.setConfiguration(configuration, WRITE_CFG_PWR_DWN_SAVE);
+    if (rs.code == 1) {
+      Serial.println(F("[BOOT] LoRa configured OK"));
+    } else {
+      Serial.print(F("[BOOT] LoRa config FAILED: "));
+      Serial.println(rs.getResponseDescription());
+    }
+  } else {
+    Serial.println(F("[BOOT] LoRa config read FAILED"));
+    rsc.close();
+  }
+
   Serial.println(F("[BOOT] LoRa OK"));
 
   Serial.println(F("[BOOT] CV UART init..."));
