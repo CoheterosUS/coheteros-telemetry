@@ -146,13 +146,13 @@ void loop() {
 
     SerialCV.write(frame, 24);
 
-    Serial.print(F("[GPS] siv="));
-    Serial.print(siv);
-    Serial.print(F(" lat="));
-    Serial.print(lat);
-    Serial.print(F(" lon="));
-    Serial.print(lon);
-    Serial.print(F(" alt="));
-    Serial.println(alt);
+    // Serial.print(F("[GPS] siv="));
+    // Serial.print(siv);
+    // Serial.print(F(" lat="));
+    // Serial.print(lat);
+    // Serial.print(F(" lon="));
+    // Serial.print(lon);
+    // Serial.print(F(" alt="));
+    // Serial.println(alt);
   }
 }
