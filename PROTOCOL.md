@@ -223,3 +223,20 @@ Command `0x10` (COMMAND_HIL_DATA). Received over UART from external device (Lapt
 | 78     | 1    | uint8   | RelayState     | Bitmask              |
 | 79     | 1    | uint8   | LastCommand    | Enum                 |
 | 80     | 1    | uint8   | SyncEnd        | `0xBE`               |
+
+## Wire Flash Log Record (Structure, Packed)
+
+Stored on W25Q32JV external flash at 10 Hz. 8 records per 256-byte page. Flight boundaries detected by tick reset (tick decreases between consecutive records).
+
+| Offset | Size | Type    | Field    | Encoding |
+|--------|------|---------|----------|----------|
+| 0      | 2    | uint16  | Sync     | `0xCAFE` |
+| 2      | 4    | uint32  | Tick     | Raw      |
+| 6      | 4    | float32 | AccelX   | Native   |
+| 10     | 4    | float32 | AccelY   | Native   |
+| 14     | 4    | float32 | AccelZ   | Native   |
+| 18     | 4    | float32 | GyroX    | Native   |
+| 22     | 4    | float32 | GyroY    | Native   |
+| 26     | 4    | float32 | GyroZ    | Native   |
+| 30     | 1    | uint8   | State    | Enum     |
+| 31     | 1    | uint8   | SyncEnd  | `0xBE`   |
