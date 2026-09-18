@@ -47,6 +47,36 @@ static void waitAuxHigh() {
   }
 }
 
+void configureLoRa() {
+  digitalWrite(PIN_M0, HIGH);
+  digitalWrite(PIN_M1, HIGH);
+  delay(50);
+
+  ResponseStructContainer rsc = e32ttl.getConfiguration();
+  if (rsc.status.code != 1) {
+    Serial.println(F("[ERR] LoRa config read failed"));
+    rsc.close();
+    return;
+  }
+
+  Configuration cfg = *(Configuration*)rsc.data;
+  rsc.close();
+
+  cfg.ADDH = 0x00;
+  cfg.ADDL = 0x01;
+  cfg.CHAN = 0x06;
+  cfg.SPED.uartBaudRate = UART_BPS_9600;
+  cfg.SPED.airDataRate = AIR_DATA_RATE_010_24;
+  cfg.OPTION.transmissionPower = POWER_10;
+  cfg.OPTION.fec = FEC_1_ON;
+  cfg.OPTION.fixedTransmission = FT_TRANSPARENT_TRANSMISSION;
+  cfg.OPTION.wirelessWakeupTime = WAKE_UP_250;
+  cfg.OPTION.ioDriveMode = IO_D_MODE_PUSH_PULLS_PULL_UPS;
+
+  ResponseStatus rs = e32ttl.setConfiguration(cfg, WRITE_CFG_PWR_DWN_SAVE);
+  Serial.println(rs.code == 1 ? F("[OK] LoRa configured") : F("[ERR] LoRa config write failed"));
+}
+
 static void checkCommands() {
   while (Serial2.available() >= 5) {
     if (Serial2.peek() != 0xFE) {
@@ -70,9 +100,17 @@ static void checkCommands() {
 void setup() {
   Serial.begin(115200);
   pinMode(PIN_AUX, INPUT);
+  pinMode(PIN_M0, OUTPUT);
+  pinMode(PIN_M1, OUTPUT);
 
   Serial2.begin(9600, SERIAL_8N1, PIN_RX_LORA, PIN_TX_LORA);
   e32ttl.begin();
+  configureLoRa();
+
+  // Always exit config mode (even if configureLoRa failed)
+  digitalWrite(PIN_M0, LOW);
+  digitalWrite(PIN_M1, LOW);
+  delay(50);
 
   Wire.begin(21, 22);
   if (miGPS.begin()) {
