@@ -8,12 +8,12 @@
 #define PIN_RX_LORA 16
 #define PIN_TX_LORA 17
 #define PIN_AUX 4
-#define PIN_M0 25
-#define PIN_M1 26
+#define PIN_M0 21
+#define PIN_M1 22
 
 // Pines Controlador de Vuelo STM32 (UART1)
-#define PIN_RX_CV 19
-#define PIN_TX_CV 18
+#define PIN_RX_CV 26
+#define PIN_TX_CV 27
 
 #define TELEMETRY_SIZE 52
 #define TELEMETRY_INTERVAL_MS 1000
@@ -111,7 +111,7 @@ void setup() {
   Serial.println(F("[BOOT] CV OK"));
 
   Serial.println(F("[BOOT] GPS init..."));
-  Wire.begin(22, 21);
+  Wire.begin(32, 33);
   if (miGPS.begin()) {
     miGPS.setI2COutput(COM_TYPE_UBX);
     miGPS.setDynamicModel(DYN_MODEL_AIRBORNE4g);

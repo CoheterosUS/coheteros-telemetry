@@ -10,8 +10,8 @@
 #define PIN_RX_LORA 16
 #define PIN_TX_LORA 17
 #define PIN_AUX 4
-#define PIN_M0 25
-#define PIN_M1 26
+#define PIN_M0 21
+#define PIN_M1 22
 
 #define TELEMETRY_SIZE 52
 #define TELEMETRY_INTERVAL_MS 1000
@@ -112,7 +112,7 @@ void setup() {
   digitalWrite(PIN_M1, LOW);
   delay(50);
 
-  Wire.begin(21, 22);
+  Wire.begin(32, 33);
   if (miGPS.begin()) {
     miGPS.setI2COutput(COM_TYPE_UBX);
     miGPS.setDynamicModel(DYN_MODEL_AIRBORNE4g);

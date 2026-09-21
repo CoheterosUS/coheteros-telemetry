@@ -9,18 +9,18 @@
 #define PIN_RX_LORA 16
 #define PIN_TX_LORA 17
 #define PIN_AUX     4
-#define PIN_M0      25
-#define PIN_M1      26
+#define PIN_M0      21
+#define PIN_M1      22
 
-#define PIN_RX_CV   19
-#define PIN_TX_CV   18
+#define PIN_RX_CV   26
+#define PIN_TX_CV   27
 
 #define TEL_SIZE  52
 #define CMD_SIZE      5     // 0xFE 0xCA <CMD> 0x00 0xBE
 #define CMD_DEDUP_MS  500   // ignore duplicate commands within this window
 #define GPS_INTERVAL  1000
-#define GPS_SDA       21
-#define GPS_SCL       22
+#define GPS_SDA       32
+#define GPS_SCL       33
 
 LoRa_E32 e32(&Serial2, PIN_AUX, PIN_M0, PIN_M1);
 HardwareSerial SerialCV(1);

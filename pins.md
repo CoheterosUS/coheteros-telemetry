@@ -1,0 +1,7 @@
+M0 21
+M1 22
+
+RX_CV 26
+TX_CV 27
+
+Wire.begin(32,33)
