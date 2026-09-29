@@ -226,7 +226,7 @@ Command `0x10` (COMMAND_HIL_DATA). Received over UART from external device (Lapt
 
 ## Wire Flash Log Record (Structure, Packed)
 
-Stored on W25Q32JV external flash at 10 Hz. 8 records per 256-byte page. Flight boundaries detected by tick reset (tick decreases between consecutive records).
+Stored on W25Q32JV external flash at 10 Hz. 8 records per 256-byte page. Flight boundaries marked by a marker record where State = `0xFF` and all sensor fields are zero. Marker is page-aligned (occupies first 32 bytes of a 256-byte page, rest is `0xFF` padding).
 
 | Offset | Size | Type    | Field    | Encoding |
 |--------|------|---------|----------|----------|
