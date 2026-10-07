@@ -21,6 +21,8 @@
 #define GPS_INTERVAL  1000
 #define GPS_SDA       32
 #define GPS_SCL       33
+#define STATE_OFFSET  48    // byte offset of flight state in telemetry frame
+#define STATE_IDLE    0
 
 LoRa_E32 e32(&Serial2, PIN_AUX, PIN_M0, PIN_M1);
 HardwareSerial SerialCV(1);
@@ -30,6 +32,7 @@ uint8_t rxBuf[TEL_SIZE];
 uint8_t txBuf[TEL_SIZE];
 uint8_t rxIdx = 0;
 bool frameReady = false;
+bool telemetryEnabled = false;
 
 uint8_t cmdBuf[CMD_SIZE];
 uint8_t cmdIdx = 0;
@@ -113,6 +116,7 @@ void loop() {
 
     if (rxIdx == TEL_SIZE) {
       if (rxBuf[TEL_SIZE - 1] == 0xBE) {
+        telemetryEnabled = (rxBuf[STATE_OFFSET] != STATE_IDLE);
         memcpy(txBuf, rxBuf, TEL_SIZE);
         frameReady = true;
       }
@@ -120,7 +124,7 @@ void loop() {
     }
   }
 
-  if (frameReady && digitalRead(PIN_AUX) == HIGH) {
+  if (frameReady && telemetryEnabled && digitalRead(PIN_AUX) == HIGH) {
     e32.sendMessage(txBuf, TEL_SIZE);
     frameReady = false;
     Serial.write(txBuf, TEL_SIZE);
