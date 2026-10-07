@@ -17,13 +17,9 @@
 
 #define TEL_SIZE  52
 #define CMD_SIZE      5     // 0xFE 0xCA <CMD> 0x00 0xBE
-#define CMD_DEDUP_MS  500   // ignore duplicate commands within this window
 #define GPS_INTERVAL  1000
 #define GPS_SDA       32
 #define GPS_SCL       33
-#define STATE_OFFSET  48    // byte offset of flight state in telemetry frame
-#define STATE_IDLE    0
-
 LoRa_E32 e32(&Serial2, PIN_AUX, PIN_M0, PIN_M1);
 HardwareSerial SerialCV(1);
 SFE_UBLOX_GNSS gps;
@@ -32,12 +28,9 @@ uint8_t rxBuf[TEL_SIZE];
 uint8_t txBuf[TEL_SIZE];
 uint8_t rxIdx = 0;
 bool frameReady = false;
-bool telemetryEnabled = false;
 
 uint8_t cmdBuf[CMD_SIZE];
 uint8_t cmdIdx = 0;
-uint8_t lastCmd = 0xFF;
-unsigned long lastCmdTime = 0;
 
 unsigned long lastGps = 0;
 
@@ -116,7 +109,6 @@ void loop() {
 
     if (rxIdx == TEL_SIZE) {
       if (rxBuf[TEL_SIZE - 1] == 0xBE) {
-        telemetryEnabled = (rxBuf[STATE_OFFSET] != STATE_IDLE);
         memcpy(txBuf, rxBuf, TEL_SIZE);
         frameReady = true;
       }
@@ -124,7 +116,7 @@ void loop() {
     }
   }
 
-  if (frameReady && telemetryEnabled && digitalRead(PIN_AUX) == HIGH) {
+  if (frameReady && digitalRead(PIN_AUX) == HIGH) {
     e32.sendMessage(txBuf, TEL_SIZE);
     frameReady = false;
     Serial.write(txBuf, TEL_SIZE);
@@ -142,15 +134,9 @@ void loop() {
 
     if (cmdIdx == CMD_SIZE) {
       if (cmdBuf[3] == 0x00 && cmdBuf[4] == 0xBE) {
-        uint8_t cmd = cmdBuf[2];
-        unsigned long now = millis();
-        if (cmd != lastCmd || (now - lastCmdTime) > CMD_DEDUP_MS) {
-          SerialCV.write(cmdBuf, CMD_SIZE);
-          Serial.print(F("[CMD] rx id=0x"));
-          Serial.println(cmd, HEX);
-          lastCmd = cmd;
-          lastCmdTime = now;
-        }
+        SerialCV.write(cmdBuf, CMD_SIZE);
+        Serial.print(F("[CMD] rx id=0x"));
+        Serial.println(cmdBuf[2], HEX);
       }
       cmdIdx = 0;
     }

@@ -12,8 +12,6 @@
 
 #define TEL_SIZE      52
 #define CMD_SIZE      5     // 0xFE 0xCA <CMD> 0x00 0xBE
-#define CMD_RETRIES   5
-#define CMD_RETRY_MS  50
 
 SoftwareSerial loraSerial(PIN_RX, PIN_TX);
 LoRa_E32 e32(&loraSerial, PIN_AUX, PIN_M0, PIN_M1);
@@ -101,11 +99,8 @@ void loop() {
 
     if (cmdIdx == CMD_SIZE) {
       if (cmdBuf[3] == 0x00 && cmdBuf[4] == 0xBE) {
-        for (uint8_t i = 0; i < CMD_RETRIES; i++) {
-          while (digitalRead(PIN_AUX) == LOW) {}
-          e32.sendMessage(cmdBuf, CMD_SIZE);
-          if (i < CMD_RETRIES - 1) delay(CMD_RETRY_MS);
-        }
+        while (digitalRead(PIN_AUX) == LOW) {}
+        e32.sendMessage(cmdBuf, CMD_SIZE);
       }
       cmdIdx = 0;
     }
