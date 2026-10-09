@@ -41,7 +41,7 @@ void configureLoRa() {
   cfg.ADDL = 0x01;
   cfg.CHAN = 0x06;
   cfg.SPED.uartBaudRate = UART_BPS_9600;
-  cfg.SPED.airDataRate = AIR_DATA_RATE_010_24;
+  cfg.SPED.airDataRate = AIR_DATA_RATE_011_48;
   cfg.OPTION.transmissionPower = POWER_10;
   cfg.OPTION.fec = FEC_1_ON;
   cfg.OPTION.fixedTransmission = FT_TRANSPARENT_TRANSMISSION;
