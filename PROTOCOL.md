@@ -31,19 +31,22 @@ Any agent that reads this file should not assume that any information is correct
 | 8     | LANDED           |
 | 9     | GROUND_ABORT     |
 | 10    | DESCENT_ABORT    |
+| 11    | ASCENT_ABORT     |
+| 12    | DEEP_CALIBRATION |
 
 ## CommandType (Enum)
 
-| Value  | Name                 | Notes                     |
-|--------|----------------------|---------------------------|
-| `0x00` | COMMAND_NONE         |                           |
-| `0x01` | COMMAND_RESET        |                           |
-| `0x02` | COMMAND_GROUND_ABORT |                           |
-| `0x03` | COMMAND_CALIBRATION  |                           |
-| `0x04` | COMMAND_DROGUE       |                           |
-| `0x05` | COMMAND_LANDED       |                           |
-| `0x10` | COMMAND_HIL_DATA     | Excluded From LastCommand |
-| `0x20` | COMMAND_GPS_DATA     | Excluded From LastCommand |
+| Value  | Name                  | Notes                     |
+|--------|-----------------------|---------------------------|
+| `0x00` | COMMAND_NONE          |                           |
+| `0x01` | COMMAND_RESET         |                           |
+| `0x02` | COMMAND_GROUND_ABORT  |                           |
+| `0x03` | COMMAND_CALIBRATION   | Optional 4-byte payload: pitch angle (float, radians) |
+| `0x04` | COMMAND_DROGUE        |                           |
+| `0x05` | COMMAND_LANDED        |                           |
+| `0x06` | COMMAND_REQUEST_TELEM |                           |
+| `0x10` | COMMAND_HIL_DATA      | Excluded From LastCommand |
+| `0x20` | COMMAND_GPS_DATA      | Excluded From LastCommand |
 
 ## SystemFaultFlags (Bitmask)
 
@@ -59,6 +62,17 @@ Any agent that reads this file should not assume that any information is correct
 | 7   | IIS2MDCTR_MODE_PERFORMANCE_FAILED |
 | 8   | SD_MOUNT_FAILED                   |
 | 9   | SD_OPEN_FAILED                    |
+| 10  | W25Q_JEDEC_ID_FAILED              |
+| 11  | W25Q_INIT_FAILED                  |
+
+### Deep Calibration (bits 16-24)
+
+Present in Flags during STATE_DEEP_CALIBRATION. Zero otherwise.
+
+| Bits  | Field              | Description                                         |
+|-------|--------------------|-----------------------------------------------------|
+| 16-21 | FacesCaptured      | Bitmask: bit 0 = +Y, 1 = -Y, 2 = +X, 3 = -X, 4 = +Z, 5 = -Z |
+| 22-24 | CurrentFace + 1    | 0 = none detected, 1-6 = face index being measured  |
 
 ## RelayState (Bitmask)
 
@@ -95,7 +109,7 @@ Any agent that reads this file should not assume that any information is correct
 | VelX           | float  | m/s                 |                  |
 | VelY           | float  | m/s                 |                  |
 | VelZ           | float  | m/s                 |                  |
-| FaultFlags     | uint32 | Bitmask             | SystemFaultFlags |
+| FaultFlags     | uint32 | Bitmask             | Bits 0-15: SystemFaultFlags, Bits 16-24: Deep Calibration |
 | BatteryVoltage | float  | Volts               |                  |
 | State          | uint8  | SystemState         |                  |
 | RelayState     | uint8  | Bitmask             | RelayState       |
@@ -111,8 +125,19 @@ Received over UART from external board (ESP32/Arduino).
 | 0      | 1    | uint8 | `0xFE` | Sync LSB            |
 | 1      | 1    | uint8 | `0xCA` | Sync MSB            |
 | 2      | 1    | uint8 | CMD    | CommandType         |
-| 3      | 1    | uint8 | `0x00` | Payload Length (0)  |
-| 4      | 1    | uint8 | `0xBE` | Footer              |
+| 3      | 1    | uint8 | LEN    | Payload Length      |
+| 4      | LEN  |       |        | Payload (optional)  |
+| 4+LEN  | 1    | uint8 | `0xBE` | Footer              |
+
+## Calibration Command Payload (Optional)
+
+Command `0x03` (COMMAND_CALIBRATION). When sent without payload (LEN=0), starts calibration without accel bias computation. When sent with a 4-byte payload, the payload is the launch rail pitch angle used for accel bias calibration.
+
+| Offset | Size | Type    | Field          | Unit    |
+|--------|------|---------|----------------|---------|
+| 0      | 4    | float32 | PitchAngleRad  | Radians |
+
+Pitch is the angle between the rocket's longitudinal axis and the horizontal plane. Vertical = pi/2.
 
 ## GPS Data Frame (Structure, Packed)
 
@@ -226,7 +251,7 @@ Command `0x10` (COMMAND_HIL_DATA). Received over UART from external device (Lapt
 
 ## Wire Flash Log Record (Structure, Packed)
 
-Stored on W25Q32JV external flash at 10 Hz. 8 records per 256-byte page. Flight boundaries detected by tick reset (tick decreases between consecutive records).
+Stored on W25Q32JV external flash at 10 Hz. 8 records per 256-byte page. Flight boundaries marked by a marker record where State = `0xFF` and all sensor fields are zero. Marker is page-aligned (occupies first 32 bytes of a 256-byte page, rest is `0xFF` padding).
 
 | Offset | Size | Type    | Field    | Encoding |
 |--------|------|---------|----------|----------|

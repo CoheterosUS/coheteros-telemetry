@@ -11,7 +11,7 @@
 #define PIN_M1  6
 
 #define TEL_SIZE      52
-#define CMD_SIZE      5     // 0xFE 0xCA <CMD> 0x00 0xBE
+#define CMD_MAX_FRAME 64    // 0xFE 0xCA <CMD> <LEN> <PAYLOAD> 0xBE
 
 SoftwareSerial loraSerial(PIN_RX, PIN_TX);
 LoRa_E32 e32(&loraSerial, PIN_AUX, PIN_M0, PIN_M1);
@@ -19,8 +19,9 @@ LoRa_E32 e32(&loraSerial, PIN_AUX, PIN_M0, PIN_M1);
 uint8_t rxBuf[TEL_SIZE];
 uint8_t rxIdx = 0;
 
-uint8_t cmdBuf[CMD_SIZE];
+uint8_t cmdBuf[CMD_MAX_FRAME];
 uint8_t cmdIdx = 0;
+uint8_t cmdExpected = 0;
 
 void configureLoRa() {
   digitalWrite(PIN_M0, HIGH);
@@ -88,7 +89,7 @@ void loop() {
   }
 
   // --- Uplink: Serial -> LoRa (command frames) ---
-  // Frame: 0xFE 0xCA <CMD> 0x00 0xBE (5 bytes)
+  // Frame: 0xFE 0xCA <CMD> <LEN> <PAYLOAD> 0xBE
   while (Serial.available()) {
     uint8_t b = Serial.read();
 
@@ -97,12 +98,21 @@ void loop() {
 
     cmdBuf[cmdIdx++] = b;
 
-    if (cmdIdx == CMD_SIZE) {
-      if (cmdBuf[3] == 0x00 && cmdBuf[4] == 0xBE) {
+    if (cmdIdx == 4) {
+      if (cmdBuf[3] > CMD_MAX_FRAME - 5) {
+        cmdIdx = 0;
+        continue;
+      }
+      cmdExpected = 5 + cmdBuf[3];
+    }
+
+    if (cmdExpected != 0 && cmdIdx == cmdExpected) {
+      if (cmdBuf[cmdExpected - 1] == 0xBE) {
         while (digitalRead(PIN_AUX) == LOW) {}
-        e32.sendMessage(cmdBuf, CMD_SIZE);
+        e32.sendMessage(cmdBuf, cmdExpected);
       }
       cmdIdx = 0;
+      cmdExpected = 0;
     }
   }
 }
