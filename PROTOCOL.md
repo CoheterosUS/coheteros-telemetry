@@ -41,10 +41,11 @@ Any agent that reads this file should not assume that any information is correct
 | `0x00` | COMMAND_NONE          |                           |
 | `0x01` | COMMAND_RESET         |                           |
 | `0x02` | COMMAND_GROUND_ABORT  |                           |
-| `0x03` | COMMAND_CALIBRATION   | Optional 4-byte payload: pitch angle (float, radians) |
+| `0x03` | COMMAND_CALIBRATION   | Requires 4-byte payload: pitch angle (float, radians). Ignored without pitch. |
 | `0x04` | COMMAND_DROGUE        |                           |
 | `0x05` | COMMAND_LANDED        |                           |
 | `0x06` | COMMAND_REQUEST_TELEM |                           |
+| `0x07` | COMMAND_DEEP_CALIBRATION | 1-byte payload: face index (1-6) |
 | `0x10` | COMMAND_HIL_DATA      | Excluded From LastCommand |
 | `0x20` | COMMAND_GPS_DATA      | Excluded From LastCommand |
 
@@ -64,15 +65,17 @@ Any agent that reads this file should not assume that any information is correct
 | 9   | SD_OPEN_FAILED                    |
 | 10  | W25Q_JEDEC_ID_FAILED              |
 | 11  | W25Q_INIT_FAILED                  |
+| 12  | W25Q_CAL_WRITE_FAILED             |
+| 13  | SIX_POINT_CAL_FAILED              |
 
-### Deep Calibration (bits 16-24)
+### Deep Calibration (bits 16-21)
 
 Present in Flags during STATE_DEEP_CALIBRATION. Zero otherwise.
 
 | Bits  | Field              | Description                                         |
 |-------|--------------------|-----------------------------------------------------|
-| 16-21 | FacesCaptured      | Bitmask: bit 0 = +Y, 1 = -Y, 2 = +X, 3 = -X, 4 = +Z, 5 = -Z |
-| 22-24 | CurrentFace + 1    | 0 = none detected, 1-6 = face index being measured  |
+| 16-18 | FacesCaptured      | Count of faces captured (0-6)                       |
+| 19-21 | CurrentFace + 1    | 0 = none detected, 1-6 = face index being measured  |
 
 ## RelayState (Bitmask)
 
@@ -83,38 +86,52 @@ Present in Flags during STATE_DEEP_CALIBRATION. Zero otherwise.
 
 ## Flight Record (Internal, Packed)
 
-| Field          | Type   | Unit                | Notes            |
-|----------------|--------|---------------------|------------------|
-| Sync           | uint16 |                     | `0xCAFE`         |
-| Tick           | uint32 | ms                  | FreeRTOS Tick    |
-| AccelX         | float  | m/s²                |                  |
-| AccelY         | float  | m/s²                |                  |
-| AccelZ         | float  | m/s²                |                  |
-| GyroX          | float  | Degrees/s           |                  |
-| GyroY          | float  | Degrees/s           |                  |
-| GyroZ          | float  | Degrees/s           |                  |
-| MagX           | float  | Milligauss          |                  |
-| MagY           | float  | Milligauss          |                  |
-| MagZ           | float  | Milligauss          |                  |
-| PressurePa     | float  | Pascals             |                  |
-| TemperatureC   | float  | Celsius             |                  |
-| Latitude       | int32  | Degrees × 10^7      |                  |
-| Longitude      | int32  | Degrees × 10^7      |                  |
-| GPSAltitude    | float  | Meters              |                  |
-| UnixTime       | uint32 | Epoch Seconds       |                  |
-| Milliseconds   | uint16 | 0–999               |                  |
-| Satellites     | uint8  | Count               |                  |
-| BaroAltitude   | float  | Meters              |                  |
-| BaroVelocity   | float  | m/s                 |                  |
-| VelX           | float  | m/s                 |                  |
-| VelY           | float  | m/s                 |                  |
-| VelZ           | float  | m/s                 |                  |
-| FaultFlags     | uint32 | Bitmask             | Bits 0-15: SystemFaultFlags, Bits 16-24: Deep Calibration |
-| BatteryVoltage | float  | Volts               |                  |
-| State          | uint8  | SystemState         |                  |
-| RelayState     | uint8  | Bitmask             | RelayState       |
-| LastCommand    | uint8  | CommandType         | Persists         |
-| SyncEnd        | uint8  |                     | `0xBE`           |
+| Field              | Type   | Unit                | Notes            |
+|--------------------|--------|---------------------|------------------|
+| Sync               | uint16 |                     | `0xCAFE`         |
+| Tick               | uint32 | ms                  | FreeRTOS Tick    |
+| AccelX             | float  | m/s^2               |                  |
+| AccelY             | float  | m/s^2               |                  |
+| AccelZ             | float  | m/s^2               |                  |
+| GyroX              | float  | Degrees/s           |                  |
+| GyroY              | float  | Degrees/s           |                  |
+| GyroZ              | float  | Degrees/s           |                  |
+| MagX               | float  | Milligauss          |                  |
+| MagY               | float  | Milligauss          |                  |
+| MagZ               | float  | Milligauss          |                  |
+| PressurePa         | float  | Pascals             |                  |
+| TemperatureC       | float  | Celsius             |                  |
+| Latitude           | int32  | Degrees x 10^7      |                  |
+| Longitude          | int32  | Degrees x 10^7      |                  |
+| GPSAltitude        | float  | Meters              |                  |
+| UnixTime           | uint32 | Epoch Seconds       |                  |
+| Milliseconds       | uint16 | 0-999               |                  |
+| Satellites         | uint8  | Count               |                  |
+| BarometricAltitude | float  | Meters              |                  |
+| BarometricVelocity | float  | m/s                 |                  |
+| GPSVelocity        | float  | m/s                 |                  |
+| VelX               | float  | m/s                 | Kalman NED       |
+| VelY               | float  | m/s                 | Kalman NED       |
+| VelZ               | float  | m/s                 | Kalman NED       |
+| PosX               | float  | m                   | Kalman NED       |
+| PosY               | float  | m                   | Kalman NED       |
+| PosZ               | float  | m                   | Kalman NED       |
+| QuatW              | float  |                     | Kalman scalar    |
+| QuatX              | float  |                     | Kalman vector    |
+| QuatY              | float  |                     | Kalman vector    |
+| QuatZ              | float  |                     | Kalman vector    |
+| BodyAccelX         | float  | m/s^2               |                  |
+| BodyAccelY         | float  | m/s^2               |                  |
+| BodyAccelZ         | float  | m/s^2               |                  |
+| BodyGyroX          | float  | Degrees/s           |                  |
+| BodyGyroY          | float  | Degrees/s           |                  |
+| BodyGyroZ          | float  | Degrees/s           |                  |
+| Flags              | uint32 | Bitmask             | Bits 0-12: SystemFaultFlags, Bits 16-21: Deep Calibration |
+| BatteryVoltage     | float  | Volts               |                  |
+| State              | uint8  | SystemState         |                  |
+| RelayState         | uint8  | Bitmask             | RelayState       |
+| LastCommand        | uint8  | CommandType         | Persists         |
+| SyncEnd            | uint8  |                     | `0xBE`           |
 
 ## Command Frame (Structure, Packed)
 
@@ -129,15 +146,34 @@ Received over UART from external board (ESP32/Arduino).
 | 4      | LEN  |       |        | Payload (optional)  |
 | 4+LEN  | 1    | uint8 | `0xBE` | Footer              |
 
-## Calibration Command Payload (Optional)
+## Calibration Command Payload
 
-Command `0x03` (COMMAND_CALIBRATION). When sent without payload (LEN=0), starts calibration without accel bias computation. When sent with a 4-byte payload, the payload is the launch rail pitch angle used for accel bias calibration.
+Command `0x03` (COMMAND_CALIBRATION). Requires a 4-byte payload containing the launch rail pitch angle. Commands without the pitch payload are ignored.
 
 | Offset | Size | Type    | Field          | Unit    |
 |--------|------|---------|----------------|---------|
 | 0      | 4    | float32 | PitchAngleRad  | Radians |
 
 Pitch is the angle between the rocket's longitudinal axis and the horizontal plane. Vertical = pi/2.
+
+## Deep Calibration Command Payload
+
+Command `0x07` (COMMAND_DEEP_CALIBRATION). Requires a 1-byte payload selecting the face to capture. Board must be held still on the specified face before sending.
+
+| Offset | Size | Type  | Field     | Values  |
+|--------|------|-------|-----------|---------|
+| 0      | 1    | uint8 | FaceIndex | 1-6     |
+
+| Value | Face |
+|-------|------|
+| 1     | +X up |
+| 2     | -X up |
+| 3     | +Y up |
+| 4     | -Y up |
+| 5     | +Z up |
+| 6     | -Z up |
+
+Accepted in STATE_IDLE or STATE_CALIBRATION. Enters STATE_DEEP_CALIBRATION and samples the specified face. After sampling, waits for the next face command. Faces can be sent in any order. Resampling a face overwrites its previous data. When all 6 unique faces have been captured, computes calibration, saves to flash, and returns to STATE_IDLE.
 
 ## GPS Data Frame (Structure, Packed)
 
@@ -149,7 +185,7 @@ Command `0x20` (COMMAND_GPS_DATA). Received over UART from external board (ESP32
 | 1      | 1    | uint8  | `0xCA` | Sync MSB             |
 | 2      | 1    | uint8  | `0x20` | COMMAND_GPS_DATA     |
 | 3      | 1    | uint8  | `0x13` | Payload Length (19)  |
-| 4–22   |      |        |        | GPS Payload          |
+| 4-22   |      |        |        | GPS Payload          |
 | 23     | 1    | uint8  | `0xBE` | Footer               |
 
 ## GPS Payload (Structure, Packed)
@@ -157,9 +193,9 @@ Command `0x20` (COMMAND_GPS_DATA). Received over UART from external board (ESP32
 | Offset | Size | Type   | Field        | Unit             |
 |--------|------|--------|--------------|------------------|
 | 0      | 4    | uint32 | UnixTime     | Epoch Seconds    |
-| 4      | 2    | uint16 | Milliseconds | 0–999            |
-| 6      | 4    | int32  | Latitude     | Degrees × 10^7   |
-| 10     | 4    | int32  | Longitude    | Degrees × 10^7   |
+| 4      | 2    | uint16 | Milliseconds | 0-999            |
+| 6      | 4    | int32  | Latitude     | Degrees x 10^7   |
+| 10     | 4    | int32  | Longitude    | Degrees x 10^7   |
 | 14     | 4    | int32  | Altitude     | Millimeters      |
 | 18     | 1    | uint8  | Satellites   | Count            |
 
@@ -173,16 +209,16 @@ Command `0x10` (COMMAND_HIL_DATA). Received over UART from external device (Lapt
 | 1      | 1    | uint8  | `0xCA` | Sync MSB             |
 | 2      | 1    | uint8  | `0x10` | COMMAND_HIL_DATA     |
 | 3      | 1    | uint8  | `0x2C` | Payload Length (44)  |
-| 4–47   |      |        |        | HIL Payload          |
+| 4-47   |      |        |        | HIL Payload          |
 | 48     | 1    | uint8  | `0xBE` | Footer               |
 
 ## HIL Payload (Structure, Packed)
 
 | Offset | Size | Type    | Field        | Unit       |
 |--------|------|---------|--------------|------------|
-| 0      | 4    | float32 | AccelX       | m/s²       |
-| 4      | 4    | float32 | AccelY       | m/s²       |
-| 8      | 4    | float32 | AccelZ       | m/s²       |
+| 0      | 4    | float32 | AccelX       | m/s^2      |
+| 4      | 4    | float32 | AccelY       | m/s^2      |
+| 8      | 4    | float32 | AccelZ       | m/s^2      |
 | 12     | 4    | float32 | GyroX        | Degrees/s  |
 | 16     | 4    | float32 | GyroY        | Degrees/s  |
 | 20     | 4    | float32 | GyroZ        | Degrees/s  |
@@ -194,30 +230,34 @@ Command `0x10` (COMMAND_HIL_DATA). Received over UART from external device (Lapt
 
 ## Wire Telemetry Packet (Structure, Packed)
 
-| Offset | Size | Type   | Field            | Encoding          |
-|--------|------|--------|------------------|-------------------|
-| 0      | 2    | uint16 | Sync             | `0xCAFE`          |
-| 2      | 4    | uint32 | Tick             | Raw               |
-| 6      | 2    | int16  | AccelX           | Truncated         |
-| 8      | 2    | int16  | AccelY           | Truncated         |
-| 10     | 2    | int16  | AccelZ           | Truncated         |
-| 12     | 2    | int16  | GyroX            | Truncated         |
-| 14     | 2    | int16  | GyroY            | Truncated         |
-| 16     | 2    | int16  | GyroZ            | Truncated         |
-| 18     | 2    | int16  | PressurePa       | ÷10               |
-| 20     | 1    | int8   | TemperatureC     | Truncated         |
-| 21     | 4    | int32  | Latitude         | ×10^7             |
-| 25     | 4    | int32  | Longitude        | ×10^7             |
-| 29     | 4    | int32  | GPSAltitude      | ×100              |
-| 33     | 1    | uint8  | Satellites       | Raw               |
-| 34     | 4    | int32  | BaroAltitude     | ×100              |
-| 38     | 4    | int32  | BaroVelocity     | ×100              |
-| 42     | 4    | uint32 | Flags            | Bitmask           |
-| 46     | 2    | int16  | BatteryVoltage   | ×10               |
-| 48     | 1    | uint8  | State            | Enum              |
-| 49     | 1    | uint8  | RelayState       | Bitmask           |
-| 50     | 1    | uint8  | LastCommand      | Enum              |
-| 51     | 1    | uint8  | SyncEnd          | `0xBE`            |
+| Offset | Size | Type    | Field              | Encoding          |
+|--------|------|---------|--------------------|-------------------|
+| 0      | 2    | uint16  | Sync               | `0xCAFE`          |
+| 2      | 4    | uint32  | Tick               | Raw               |
+| 6      | 2    | int16   | AccelX             | Truncated         |
+| 8      | 2    | int16   | AccelY             | Truncated         |
+| 10     | 2    | int16   | AccelZ             | Truncated         |
+| 12     | 2    | int16   | GyroX              | Truncated         |
+| 14     | 2    | int16   | GyroY              | Truncated         |
+| 16     | 2    | int16   | GyroZ              | Truncated         |
+| 18     | 4    | int32   | Latitude           | x10^7             |
+| 22     | 4    | int32   | Longitude          | x10^7             |
+| 26     | 2    | int16   | GPSAltitude        | x100              |
+| 28     | 1    | uint8   | Satellites         | Raw               |
+| 29     | 2    | int16   | BarometricAltitude | x100              |
+| 31     | 2    | int16   | PosZ               | x1, Kalman NED    |
+| 33     | 2    | int16   | VelZ               | x100, Kalman NED  |
+| 35     | 1    | int8    | QuatW              | x100              |
+| 36     | 1    | int8    | QuatX              | x100              |
+| 37     | 1    | int8    | QuatY              | x100              |
+| 38     | 1    | int8    | QuatZ              | x100              |
+| 39     | 4    | float32 | KalmanPZ           | P[2,2], pos-Z var |
+| 43     | 4    | uint32  | Flags              | Bitmask           |
+| 47     | 1    | uint8   | BatteryVoltage     | x10               |
+| 48     | 1    | uint8   | State              | Enum              |
+| 49     | 1    | uint8   | RelayState         | Bitmask           |
+| 50     | 1    | uint8   | LastCommand        | Enum              |
+| 51     | 1    | uint8   | SyncEnd            | `0xBE`            |
 
 ## Wire SD Log Record (Structure, Packed)
 
@@ -236,18 +276,28 @@ Command `0x10` (COMMAND_HIL_DATA). Received over UART from external device (Lapt
 | 38     | 4    | float32 | MagZ           | Native               |
 | 42     | 4    | float32 | PressurePa     | Native               |
 | 46     | 4    | float32 | TemperatureC   | Native               |
-| 50     | 4    | int32   | Latitude       | ×10^7                |
-| 54     | 4    | int32   | Longitude      | ×10^7                |
+| 50     | 4    | int32   | Latitude       | x10^7                |
+| 54     | 4    | int32   | Longitude      | x10^7                |
 | 58     | 4    | float32 | GPSAltitude    | Native               |
 | 62     | 4    | uint32  | UnixTime       | Epoch Seconds        |
-| 66     | 2    | uint16  | Milliseconds   | 0–999                |
-| 68     | 1    | uint8   | Satellites     | Raw                  |
-| 69     | 4    | uint32  | Flags          | Bitmask              |
-| 73     | 4    | float32 | BatteryVoltage | Native               |
-| 77     | 1    | uint8   | State          | Enum                 |
-| 78     | 1    | uint8   | RelayState     | Bitmask              |
-| 79     | 1    | uint8   | LastCommand    | Enum                 |
-| 80     | 1    | uint8   | SyncEnd        | `0xBE`               |
+| 66     | 1    | uint8   | Satellites     | Raw                  |
+| 67     | 4    | float32 | VelX           | Native, Kalman NED   |
+| 71     | 4    | float32 | VelY           | Native, Kalman NED   |
+| 75     | 4    | float32 | VelZ           | Native, Kalman NED   |
+| 79     | 4    | float32 | PosX           | Native, Kalman NED   |
+| 83     | 4    | float32 | PosY           | Native, Kalman NED   |
+| 87     | 4    | float32 | PosZ           | Native, Kalman NED   |
+| 91     | 4    | float32 | QuatW          | Native, scalar       |
+| 95     | 4    | float32 | QuatX          | Native, vector       |
+| 99     | 4    | float32 | QuatY          | Native, vector       |
+| 103    | 4    | float32 | QuatZ          | Native, vector       |
+| 107    | 4    | float32 | KalmanPZ       | P[2,2], pos-Z var    |
+| 111    | 4    | uint32  | Flags          | Bitmask              |
+| 115    | 4    | float32 | BatteryVoltage | Native               |
+| 119    | 1    | uint8   | State          | Enum                 |
+| 120    | 1    | uint8   | RelayState     | Bitmask              |
+| 121    | 1    | uint8   | LastCommand    | Enum                 |
+| 122    | 1    | uint8   | SyncEnd        | `0xBE`               |
 
 ## Wire Flash Log Record (Structure, Packed)
 
