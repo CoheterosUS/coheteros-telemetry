@@ -15,8 +15,7 @@
 #define PIN_RX_CV   26
 #define PIN_TX_CV   27
 
-#define TEL_SIZE  52
-#define CMD_MAX_FRAME 64    // 0xFE 0xCA <CMD> <LEN> <PAYLOAD> 0xBE
+#define CMD_MAX_FRAME 64
 #define GPS_INTERVAL  1000
 #define GPS_SDA       32
 #define GPS_SCL       33
@@ -24,14 +23,16 @@ LoRa_E32 e32(&Serial2, PIN_AUX, PIN_M0, PIN_M1);
 HardwareSerial SerialCV(1);
 SFE_UBLOX_GNSS gps;
 
-uint8_t rxBuf[TEL_SIZE];
-uint8_t txBuf[TEL_SIZE];
-uint8_t rxIdx = 0;
+uint8_t cvBuf[CMD_MAX_FRAME];
+uint8_t cvIdx = 0;
+uint8_t cvExpected = 0;
+uint8_t txBuf[CMD_MAX_FRAME];
+uint8_t txLen = 0;
 bool frameReady = false;
 
-uint8_t cmdBuf[CMD_MAX_FRAME];
-uint8_t cmdIdx = 0;
-uint8_t cmdExpected = 0;
+uint8_t loraBuf[CMD_MAX_FRAME];
+uint8_t loraIdx = 0;
+uint8_t loraExpected = 0;
 
 unsigned long lastGps = 0;
 
@@ -99,56 +100,65 @@ void setup() {
 }
 
 void loop() {
-  // --- Downlink: CV -> LoRa (telemetry frames, 52 bytes) ---
+  // --- Downlink: CV -> LoRa (command frames) ---
   while (SerialCV.available()) {
     uint8_t b = SerialCV.read();
 
-    if (rxIdx == 0 && b != 0xFE) continue;
-    if (rxIdx == 1 && b != 0xCA) { rxIdx = 0; continue; }
+    if (cvIdx == 0 && b != 0xFE) continue;
+    if (cvIdx == 1 && b != 0xCA) { cvIdx = 0; continue; }
 
-    rxBuf[rxIdx++] = b;
+    cvBuf[cvIdx++] = b;
 
-    if (rxIdx == TEL_SIZE) {
-      if (rxBuf[TEL_SIZE - 1] == 0xBE) {
-        memcpy(txBuf, rxBuf, TEL_SIZE);
+    if (cvIdx == 4) {
+      if (cvBuf[3] > CMD_MAX_FRAME - 5) {
+        cvIdx = 0;
+        continue;
+      }
+      cvExpected = 5 + cvBuf[3];
+    }
+
+    if (cvExpected != 0 && cvIdx == cvExpected) {
+      if (cvBuf[cvExpected - 1] == 0xBE) {
+        memcpy(txBuf, cvBuf, cvExpected);
+        txLen = cvExpected;
         frameReady = true;
       }
-      rxIdx = 0;
+      cvIdx = 0;
+      cvExpected = 0;
     }
   }
 
   if (frameReady && digitalRead(PIN_AUX) == HIGH) {
-    e32.sendMessage(txBuf, TEL_SIZE);
+    e32.sendMessage(txBuf, txLen);
     frameReady = false;
-    Serial.write(txBuf, TEL_SIZE);
+    Serial.write(txBuf, txLen);
   }
 
   // --- Uplink: LoRa -> CV (command frames) ---
-  // Frame: 0xFE 0xCA <CMD> <LEN> <PAYLOAD> 0xBE
   while (Serial2.available()) {
     uint8_t b = Serial2.read();
 
-    if (cmdIdx == 0 && b != 0xFE) continue;
-    if (cmdIdx == 1 && b != 0xCA) { cmdIdx = 0; continue; }
+    if (loraIdx == 0 && b != 0xFE) continue;
+    if (loraIdx == 1 && b != 0xCA) { loraIdx = 0; continue; }
 
-    cmdBuf[cmdIdx++] = b;
+    loraBuf[loraIdx++] = b;
 
-    if (cmdIdx == 4) {
-      if (cmdBuf[3] > CMD_MAX_FRAME - 5) {
-        cmdIdx = 0;
+    if (loraIdx == 4) {
+      if (loraBuf[3] > CMD_MAX_FRAME - 5) {
+        loraIdx = 0;
         continue;
       }
-      cmdExpected = 5 + cmdBuf[3];
+      loraExpected = 5 + loraBuf[3];
     }
 
-    if (cmdExpected != 0 && cmdIdx == cmdExpected) {
-      if (cmdBuf[cmdExpected - 1] == 0xBE) {
-        SerialCV.write(cmdBuf, cmdExpected);
+    if (loraExpected != 0 && loraIdx == loraExpected) {
+      if (loraBuf[loraExpected - 1] == 0xBE) {
+        SerialCV.write(loraBuf, loraExpected);
         Serial.print(F("[CMD] rx id=0x"));
-        Serial.println(cmdBuf[2], HEX);
+        Serial.println(loraBuf[2], HEX);
       }
-      cmdIdx = 0;
-      cmdExpected = 0;
+      loraIdx = 0;
+      loraExpected = 0;
     }
   }
 

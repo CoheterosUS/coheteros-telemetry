@@ -10,18 +10,18 @@
 #define PIN_M0  5
 #define PIN_M1  6
 
-#define TEL_SIZE      52
-#define CMD_MAX_FRAME 64    // 0xFE 0xCA <CMD> <LEN> <PAYLOAD> 0xBE
+#define CMD_MAX_FRAME 64
 
 SoftwareSerial loraSerial(PIN_RX, PIN_TX);
 LoRa_E32 e32(&loraSerial, PIN_AUX, PIN_M0, PIN_M1);
 
-uint8_t rxBuf[TEL_SIZE];
-uint8_t rxIdx = 0;
+uint8_t loraBuf[CMD_MAX_FRAME];
+uint8_t loraIdx = 0;
+uint8_t loraExpected = 0;
 
-uint8_t cmdBuf[CMD_MAX_FRAME];
-uint8_t cmdIdx = 0;
-uint8_t cmdExpected = 0;
+uint8_t serialBuf[CMD_MAX_FRAME];
+uint8_t serialIdx = 0;
+uint8_t serialExpected = 0;
 
 void configureLoRa() {
   digitalWrite(PIN_M0, HIGH);
@@ -71,48 +71,56 @@ void setup() {
 }
 
 void loop() {
-  // --- Downlink: LoRa -> Serial (telemetry frames, 52 bytes) ---
+  // --- Downlink: LoRa -> Serial (command frames) ---
   while (loraSerial.available()) {
     uint8_t b = loraSerial.read();
 
-    if (rxIdx == 0 && b != 0xFE) continue;
-    if (rxIdx == 1 && b != 0xCA) { rxIdx = 0; continue; }
+    if (loraIdx == 0 && b != 0xFE) continue;
+    if (loraIdx == 1 && b != 0xCA) { loraIdx = 0; continue; }
 
-    rxBuf[rxIdx++] = b;
+    loraBuf[loraIdx++] = b;
 
-    if (rxIdx == TEL_SIZE) {
-      if (rxBuf[TEL_SIZE - 1] == 0xBE) {
-        Serial.write(rxBuf, TEL_SIZE);
+    if (loraIdx == 4) {
+      if (loraBuf[3] > CMD_MAX_FRAME - 5) {
+        loraIdx = 0;
+        continue;
       }
-      rxIdx = 0;
+      loraExpected = 5 + loraBuf[3];
+    }
+
+    if (loraExpected != 0 && loraIdx == loraExpected) {
+      if (loraBuf[loraExpected - 1] == 0xBE) {
+        Serial.write(loraBuf, loraExpected);
+      }
+      loraIdx = 0;
+      loraExpected = 0;
     }
   }
 
   // --- Uplink: Serial -> LoRa (command frames) ---
-  // Frame: 0xFE 0xCA <CMD> <LEN> <PAYLOAD> 0xBE
   while (Serial.available()) {
     uint8_t b = Serial.read();
 
-    if (cmdIdx == 0 && b != 0xFE) continue;
-    if (cmdIdx == 1 && b != 0xCA) { cmdIdx = 0; continue; }
+    if (serialIdx == 0 && b != 0xFE) continue;
+    if (serialIdx == 1 && b != 0xCA) { serialIdx = 0; continue; }
 
-    cmdBuf[cmdIdx++] = b;
+    serialBuf[serialIdx++] = b;
 
-    if (cmdIdx == 4) {
-      if (cmdBuf[3] > CMD_MAX_FRAME - 5) {
-        cmdIdx = 0;
+    if (serialIdx == 4) {
+      if (serialBuf[3] > CMD_MAX_FRAME - 5) {
+        serialIdx = 0;
         continue;
       }
-      cmdExpected = 5 + cmdBuf[3];
+      serialExpected = 5 + serialBuf[3];
     }
 
-    if (cmdExpected != 0 && cmdIdx == cmdExpected) {
-      if (cmdBuf[cmdExpected - 1] == 0xBE) {
+    if (serialExpected != 0 && serialIdx == serialExpected) {
+      if (serialBuf[serialExpected - 1] == 0xBE) {
         while (digitalRead(PIN_AUX) == LOW) {}
-        e32.sendMessage(cmdBuf, cmdExpected);
+        e32.sendMessage(serialBuf, serialExpected);
       }
-      cmdIdx = 0;
-      cmdExpected = 0;
+      serialIdx = 0;
+      serialExpected = 0;
     }
   }
 }
