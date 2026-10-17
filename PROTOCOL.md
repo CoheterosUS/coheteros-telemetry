@@ -47,6 +47,7 @@ Any agent that reads this file should not assume that any information is correct
 | `0x06` | COMMAND_DEEP_CALIBRATION | 1-byte payload: face index (1-6) |
 | `0x07` | COMMAND_REQUEST_TELEM_A | FC responds with COMMAND_RESPONSE_TELEM_A |
 | `0x08` | COMMAND_REQUEST_TELEM_B | FC responds with COMMAND_RESPONSE_TELEM_B |
+| `0x09` | COMMAND_HIL_START     | Start HIL from SD (HIL.BIN), IDLE only |
 | `0x10` | COMMAND_HIL_DATA      | Excluded From LastCommand |
 | `0x20` | COMMAND_GPS_DATA      | Excluded From LastCommand |
 | `0x80` | COMMAND_RESPONSE_TELEM_A | Response only, FC to ground |
@@ -151,6 +152,14 @@ Used in both directions: inbound (ESP32/Arduino to FC) and outbound (FC telemetr
 | 4      | LEN  |       |        | Payload (optional)  |
 | 4+LEN  | 1    | uint8 | `0xBE` | Footer              |
 
+## Telemetry Request Payload
+
+Commands `0x07` (COMMAND_REQUEST_TELEM_A) and `0x08` (COMMAND_REQUEST_TELEM_B). Ground station sends a 1-byte payload containing a sequence number. FC echoes this SEQ in the response packet for ACK matching.
+
+| Offset | Size | Type  | Field | Values  |
+|--------|------|-------|-------|---------|
+| 0      | 1    | uint8 | SEQ   | 0-255   |
+
 ## Calibration Command Payload
 
 Command `0x03` (COMMAND_CALIBRATION). Requires a 4-byte payload containing the launch rail pitch angle. Commands without the pitch payload are ignored.
@@ -233,66 +242,68 @@ Command `0x10` (COMMAND_HIL_DATA). Received over UART from external device (Lapt
 | 36     | 4    | float32 | PressurePa   | Pascals    |
 | 40     | 4    | float32 | TemperatureC | Celsius    |
 
-## Wire Telemetry A (CMD `0x80`, 53 bytes)
+## Wire Telemetry A (CMD `0x80`, 54 bytes)
 
-Sent by FC in response to `COMMAND_REQUEST_TELEM_A`.
+Sent by FC in response to `COMMAND_REQUEST_TELEM_A`. SEQ echoes the request's SEQ for ACK.
 
 | Offset | Size | Type    | Field              | Encoding            |
 |--------|------|---------|--------------------|---------------------|
 | 0      | 2    | uint16  | Sync               | `0xCAFE`            |
 | 2      | 1    | uint8   | CMD                | `0x80`              |
-| 3      | 1    | uint8   | LEN                | `0x30` (48)         |
-| 4      | 4    | uint32  | Tick               | Raw                 |
-| 8      | 2    | int16   | BodyAccelX         | x100                |
-| 10     | 2    | int16   | BodyAccelY         | x100                |
-| 12     | 2    | int16   | BodyAccelZ         | x100                |
-| 14     | 2    | int16   | BodyGyroX          | x10                 |
-| 16     | 2    | int16   | BodyGyroY          | x10                 |
-| 18     | 2    | int16   | BodyGyroZ          | x10                 |
-| 20     | 2    | int16   | QuatW              | x10000              |
-| 22     | 2    | int16   | QuatX              | x10000              |
-| 24     | 2    | int16   | QuatY              | x10000              |
-| 26     | 2    | int16   | QuatZ              | x10000              |
-| 28     | 1    | uint8   | State              | Enum                |
-| 29     | 4    | float32 | BarometricAltitude | Native              |
-| 33     | 4    | float32 | PosZ               | Native, Kalman NED  |
-| 37     | 4    | float32 | VelZ               | Native, Kalman NED  |
-| 41     | 4    | float32 | KalmanPZ           | P[2,2], pos-Z var   |
-| 45     | 4    | uint32  | Flags              | Bitmask             |
-| 49     | 1    | uint8   | RelayState         | Bitmask             |
-| 50     | 1    | uint8   | Satellites         | Raw                 |
-| 51     | 1    | uint8   | LastCommand        | Enum                |
-| 52     | 1    | uint8   | SyncEnd            | `0xBE`              |
+| 3      | 1    | uint8   | LEN                | `0x31` (49)         |
+| 4      | 1    | uint8   | SEQ                | Echoed from request |
+| 5      | 4    | uint32  | Tick               | Raw                 |
+| 9      | 2    | int16   | BodyAccelX         | x100                |
+| 11     | 2    | int16   | BodyAccelY         | x100                |
+| 13     | 2    | int16   | BodyAccelZ         | x100                |
+| 15     | 2    | int16   | BodyGyroX          | x10                 |
+| 17     | 2    | int16   | BodyGyroY          | x10                 |
+| 19     | 2    | int16   | BodyGyroZ          | x10                 |
+| 21     | 2    | int16   | QuatW              | x10000              |
+| 23     | 2    | int16   | QuatX              | x10000              |
+| 25     | 2    | int16   | QuatY              | x10000              |
+| 27     | 2    | int16   | QuatZ              | x10000              |
+| 29     | 1    | uint8   | State              | Enum                |
+| 30     | 4    | float32 | BarometricAltitude | Native              |
+| 34     | 4    | float32 | PosZ               | Native, Kalman NED  |
+| 38     | 4    | float32 | VelZ               | Native, Kalman NED  |
+| 42     | 4    | float32 | KalmanPZ           | P[2,2], pos-Z var   |
+| 46     | 4    | uint32  | Flags              | Bitmask             |
+| 50     | 1    | uint8   | RelayState         | Bitmask             |
+| 51     | 1    | uint8   | Satellites         | Raw                 |
+| 52     | 1    | uint8   | LastCommand        | Enum                |
+| 53     | 1    | uint8   | SyncEnd            | `0xBE`              |
 
-## Wire Telemetry B (CMD `0x81`, 53 bytes)
+## Wire Telemetry B (CMD `0x81`, 54 bytes)
 
-Sent by FC in response to `COMMAND_REQUEST_TELEM_B`.
+Sent by FC in response to `COMMAND_REQUEST_TELEM_B`. SEQ echoes the request's SEQ for ACK.
 
 | Offset | Size | Type    | Field              | Encoding            |
 |--------|------|---------|--------------------|---------------------|
 | 0      | 2    | uint16  | Sync               | `0xCAFE`            |
 | 2      | 1    | uint8   | CMD                | `0x81`              |
-| 3      | 1    | uint8   | LEN                | `0x30` (48)         |
-| 4      | 4    | uint32  | Tick               | Raw                 |
-| 8      | 2    | int16   | BodyAccelX         | x100                |
-| 10     | 2    | int16   | BodyAccelY         | x100                |
-| 12     | 2    | int16   | BodyAccelZ         | x100                |
-| 14     | 2    | int16   | BodyGyroX          | x10                 |
-| 16     | 2    | int16   | BodyGyroY          | x10                 |
-| 18     | 2    | int16   | BodyGyroZ          | x10                 |
-| 20     | 2    | int16   | QuatW              | x10000              |
-| 22     | 2    | int16   | QuatX              | x10000              |
-| 24     | 2    | int16   | QuatY              | x10000              |
-| 26     | 2    | int16   | QuatZ              | x10000              |
-| 28     | 1    | uint8   | State              | Enum                |
-| 29     | 4    | int32   | Latitude           | x10^7               |
-| 33     | 4    | int32   | Longitude          | x10^7               |
-| 37     | 4    | float32 | GPSAltitude        | Native              |
-| 41     | 4    | uint32  | UnixTime           | Epoch Seconds       |
-| 45     | 4    | float32 | PressurePa         | Native              |
-| 49     | 2    | int16   | TemperatureC       | x100                |
-| 51     | 1    | uint8   | BatteryVoltage     | x10                 |
-| 52     | 1    | uint8   | SyncEnd            | `0xBE`              |
+| 3      | 1    | uint8   | LEN                | `0x31` (49)         |
+| 4      | 1    | uint8   | SEQ                | Echoed from request |
+| 5      | 4    | uint32  | Tick               | Raw                 |
+| 9      | 2    | int16   | BodyAccelX         | x100                |
+| 11     | 2    | int16   | BodyAccelY         | x100                |
+| 13     | 2    | int16   | BodyAccelZ         | x100                |
+| 15     | 2    | int16   | BodyGyroX          | x10                 |
+| 17     | 2    | int16   | BodyGyroY          | x10                 |
+| 19     | 2    | int16   | BodyGyroZ          | x10                 |
+| 21     | 2    | int16   | QuatW              | x10000              |
+| 23     | 2    | int16   | QuatX              | x10000              |
+| 25     | 2    | int16   | QuatY              | x10000              |
+| 27     | 2    | int16   | QuatZ              | x10000              |
+| 29     | 1    | uint8   | State              | Enum                |
+| 30     | 4    | int32   | Latitude           | x10^7               |
+| 34     | 4    | int32   | Longitude          | x10^7               |
+| 38     | 4    | float32 | GPSAltitude        | Native              |
+| 42     | 4    | uint32  | UnixTime           | Epoch Seconds       |
+| 46     | 4    | float32 | PressurePa         | Native              |
+| 50     | 2    | int16   | TemperatureC       | x100                |
+| 52     | 1    | uint8   | BatteryVoltage     | x10                 |
+| 53     | 1    | uint8   | SyncEnd            | `0xBE`              |
 
 ## Wire SD Log Record (Structure, Packed)
 

@@ -16,6 +16,7 @@
 #define PIN_TX_CV   27
 
 #define CMD_MAX_FRAME 64
+#define FRAME_TIMEOUT 200
 #define GPS_INTERVAL  1000
 #define GPS_SDA       32
 #define GPS_SCL       33
@@ -23,33 +24,81 @@ LoRa_E32 e32(&Serial2, PIN_AUX, PIN_M0, PIN_M1);
 HardwareSerial SerialCV(1);
 SFE_UBLOX_GNSS gps;
 
-uint8_t cvBuf[CMD_MAX_FRAME];
-uint8_t cvIdx = 0;
-uint8_t cvExpected = 0;
+struct FrameParser {
+  uint8_t buf[CMD_MAX_FRAME];
+  uint8_t idx;
+  uint8_t expected;
+  unsigned long lastByte;
+};
+
+FrameParser cvParser;
+FrameParser loraParser;
+
 uint8_t txBuf[CMD_MAX_FRAME];
 uint8_t txLen = 0;
 bool frameReady = false;
 
-uint8_t loraBuf[CMD_MAX_FRAME];
-uint8_t loraIdx = 0;
-uint8_t loraExpected = 0;
-
+bool gpsOk = false;
 unsigned long lastGps = 0;
 
-void configureLoRa() {
-  digitalWrite(PIN_M0, HIGH);
-  digitalWrite(PIN_M1, HIGH);
-  delay(50);
+// Returns the frame length once p.buf holds a complete valid frame, 0 otherwise.
+uint8_t feedByte(FrameParser &p, uint8_t b) {
+  unsigned long now = millis();
+  if (p.idx != 0 && now - p.lastByte > FRAME_TIMEOUT) {
+    p.idx = 0;
+    p.expected = 0;
+  }
+  p.lastByte = now;
 
+  if (p.idx == 0 && b != 0xFE) return 0;
+  if (p.idx == 1 && b != 0xCA) {
+    p.idx = 0;
+    p.expected = 0;
+    return 0;
+  }
+
+  p.buf[p.idx++] = b;
+
+  if (p.idx == 4) {
+    if (p.buf[3] > CMD_MAX_FRAME - 5) {
+      p.idx = 0;
+      p.expected = 0;
+      return 0;
+    }
+    p.expected = 5 + p.buf[3];
+  }
+
+  if (p.expected != 0 && p.idx == p.expected) {
+    uint8_t len = p.expected;
+    p.idx = 0;
+    p.expected = 0;
+    return p.buf[len - 1] == 0xBE ? len : 0;
+  }
+  return 0;
+}
+
+bool loraCfgMatches(const Configuration &c) {
+  return c.ADDH == 0x00 && c.ADDL == 0x01 && c.CHAN == 0x06 &&
+         c.SPED.uartBaudRate == UART_BPS_9600 &&
+         c.SPED.airDataRate == AIR_DATA_RATE_011_48 &&
+         c.OPTION.transmissionPower == POWER_10 &&
+         c.OPTION.fec == FEC_1_ON &&
+         c.OPTION.fixedTransmission == FT_TRANSPARENT_TRANSMISSION &&
+         c.OPTION.wirelessWakeupTime == WAKE_UP_250 &&
+         c.OPTION.ioDriveMode == IO_D_MODE_PUSH_PULLS_PULL_UPS;
+}
+
+bool configureLoRa() {
   ResponseStructContainer rsc = e32.getConfiguration();
   if (rsc.status.code != 1) {
-    Serial.println(F("[ERR] LoRa config read failed"));
     rsc.close();
-    return;
+    return false;
   }
 
   Configuration cfg = *(Configuration*)rsc.data;
   rsc.close();
+
+  if (loraCfgMatches(cfg)) return true;
 
   cfg.ADDH = 0x00;
   cfg.ADDL = 0x01;
@@ -62,8 +111,7 @@ void configureLoRa() {
   cfg.OPTION.wirelessWakeupTime = WAKE_UP_250;
   cfg.OPTION.ioDriveMode = IO_D_MODE_PUSH_PULLS_PULL_UPS;
 
-  ResponseStatus rs = e32.setConfiguration(cfg, WRITE_CFG_PWR_DWN_SAVE);
-  Serial.println(rs.code == 1 ? F("[OK] LoRa configured") : F("[ERR] LoRa config write failed"));
+  return e32.setConfiguration(cfg, WRITE_CFG_PWR_DWN_SAVE).code == 1;
 }
 
 void setup() {
@@ -77,16 +125,25 @@ void setup() {
 
   Serial2.begin(9600, SERIAL_8N1, PIN_RX_LORA, PIN_TX_LORA);
   e32.begin();
-  configureLoRa();
+
+  // Retry: the module may be powered from a rail that comes up after the ESP32.
+  bool loraOk = false;
+  for (uint8_t i = 0; i < 6 && !loraOk; i++) {
+    loraOk = configureLoRa();
+    if (!loraOk) delay(500);
+  }
+  Serial.println(loraOk ? F("[OK] LoRa configured") : F("[ERR] LoRa config failed"));
 
   digitalWrite(PIN_M0, LOW);
   digitalWrite(PIN_M1, LOW);
   delay(50);
 
+  SerialCV.setRxBufferSize(1024);
   SerialCV.begin(115200, SERIAL_8N1, PIN_RX_CV, PIN_TX_CV);
 
   Wire.begin(GPS_SDA, GPS_SCL);
-  if (gps.begin()) {
+  gpsOk = gps.begin();
+  if (gpsOk) {
     gps.setI2COutput(COM_TYPE_UBX);
     gps.setDynamicModel(DYN_MODEL_AIRBORNE4g);
     gps.setNavigationFrequency(1);
@@ -102,70 +159,33 @@ void setup() {
 void loop() {
   // --- Downlink: CV -> LoRa (command frames) ---
   while (SerialCV.available()) {
-    uint8_t b = SerialCV.read();
-
-    if (cvIdx == 0 && b != 0xFE) continue;
-    if (cvIdx == 1 && b != 0xCA) { cvIdx = 0; continue; }
-
-    cvBuf[cvIdx++] = b;
-
-    if (cvIdx == 4) {
-      if (cvBuf[3] > CMD_MAX_FRAME - 5) {
-        cvIdx = 0;
-        continue;
-      }
-      cvExpected = 5 + cvBuf[3];
-    }
-
-    if (cvExpected != 0 && cvIdx == cvExpected) {
-      if (cvBuf[cvExpected - 1] == 0xBE) {
-        memcpy(txBuf, cvBuf, cvExpected);
-        txLen = cvExpected;
-        frameReady = true;
-      }
-      cvIdx = 0;
-      cvExpected = 0;
+    uint8_t len = feedByte(cvParser, SerialCV.read());
+    if (len) {
+      memcpy(txBuf, cvParser.buf, len);
+      txLen = len;
+      frameReady = true;
     }
   }
 
   if (frameReady && digitalRead(PIN_AUX) == HIGH) {
-    e32.sendMessage(txBuf, txLen);
+    Serial2.write(txBuf, txLen);
     frameReady = false;
     Serial.write(txBuf, txLen);
   }
 
   // --- Uplink: LoRa -> CV (command frames) ---
   while (Serial2.available()) {
-    uint8_t b = Serial2.read();
-
-    if (loraIdx == 0 && b != 0xFE) continue;
-    if (loraIdx == 1 && b != 0xCA) { loraIdx = 0; continue; }
-
-    loraBuf[loraIdx++] = b;
-
-    if (loraIdx == 4) {
-      if (loraBuf[3] > CMD_MAX_FRAME - 5) {
-        loraIdx = 0;
-        continue;
-      }
-      loraExpected = 5 + loraBuf[3];
-    }
-
-    if (loraExpected != 0 && loraIdx == loraExpected) {
-      if (loraBuf[loraExpected - 1] == 0xBE) {
-        SerialCV.write(loraBuf, loraExpected);
-        Serial.print(F("[CMD] rx id=0x"));
-        Serial.println(loraBuf[2], HEX);
-      }
-      loraIdx = 0;
-      loraExpected = 0;
+    uint8_t len = feedByte(loraParser, Serial2.read());
+    if (len) {
+      SerialCV.write(loraParser.buf, len);
+      Serial.print(F("[CMD] rx id=0x"));
+      Serial.println(loraParser.buf[2], HEX);
     }
   }
 
   // --- GPS -> CV at 1Hz ---
-  if (millis() - lastGps >= GPS_INTERVAL) {
+  if (gpsOk && millis() - lastGps >= GPS_INTERVAL && gps.getPVT(0)) {
     lastGps = millis();
-    gps.getPVT(0);
 
     uint32_t tod = gps.getHour() * 3600UL + gps.getMinute() * 60UL + gps.getSecond();
     uint16_t ms  = gps.getMillisecond();
